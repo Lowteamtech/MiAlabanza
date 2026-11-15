@@ -1,4 +1,4 @@
-# Repertorio
+# MiAlabanza Team
 
 App web instalable (iPad, iPhone, Android) para el equipo de alabanza:
 repertorios del domingo, cifrados con transposición, notas de arreglo por

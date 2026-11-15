@@ -5,7 +5,7 @@ import {
 import { openStore, cloudConfigured, teamLogin, teamLogout, LocalStore } from './store.js';
 import { Metronome, makeTapper } from './metronome.js';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
 
 // ---------------- Utilidades ----------------
 
@@ -939,7 +939,7 @@ function viewSettings() {
         <p class="small">${isIOS ? 'En iPhone o iPad: abre esta página en Safari, toca <b>Compartir</b> (□↑) y luego <b>Agregar a inicio</b>.' : 'En Android: menú <b>⋮</b> de Chrome → <b>Instalar app</b> o <b>Agregar a pantalla principal</b>.'}</p>
       </fieldset>` : ''}
 
-      <p class="small muted">Repertorio v${APP_VERSION}</p>
+      <p class="small muted">MiAlabanza Team v${APP_VERSION}</p>
     </div>`;
 
   const view = $('#view');
@@ -969,7 +969,7 @@ function viewSettings() {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `repertorio-respaldo-${todayISO()}.json`;
+      a.download = `mialabanza-respaldo-${todayISO()}.json`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     } else if (act === 'login') {
