@@ -986,7 +986,14 @@ function viewSettings() {
         if (n && confirm(`Hay ${n} elementos guardados solo en este dispositivo. ¿Subirlos al equipo?`)) await uploadLocal();
       } catch (err) {
         console.error(err);
-        toast(/network/i.test(err.code || '') ? 'Sin conexión. Intenta con señal.' : 'Correo o clave incorrectos', 3500);
+        const code = err.code || '';
+        const msg = /network/.test(code) ? 'Sin conexión. Intenta con señal.'
+          : /too-many-requests/.test(code) ? 'Demasiados intentos. Espera unos minutos.'
+          : /operation-not-allowed/.test(code) ? 'El inicio con correo no está habilitado en Firebase.'
+          : /invalid-email/.test(code) ? 'Ese correo no es válido.'
+          : /(invalid-credential|wrong-password|user-not-found|invalid-login)/.test(code) ? 'Correo o clave incorrectos'
+          : 'No se pudo conectar (' + code + ')';
+        toast(msg, 4000);
         b.disabled = false; b.textContent = 'Conectar';
       }
     } else if (act === 'logout') {
