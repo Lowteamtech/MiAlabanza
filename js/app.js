@@ -1102,7 +1102,13 @@ restart().catch((e) => {
 });
 
 // Service worker: funciona sin conexión y se actualiza solo.
-if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+// En la vista previa de desarrollo no se usa caché, para ver los cambios al instante.
+// Si algún día la app se publica en un dominio propio, agrégalo aquí.
+const PRODUCTION = location.hostname.endsWith('github.io');
+if ('serviceWorker' in navigator && !PRODUCTION) {
+  navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.unregister())).catch(() => {});
+}
+if ('serviceWorker' in navigator && PRODUCTION) {
   navigator.serviceWorker.register('sw.js').then((reg) => {
     reg.addEventListener('updatefound', () => {
       const nw = reg.installing;
