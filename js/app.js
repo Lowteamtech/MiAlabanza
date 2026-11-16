@@ -5,7 +5,7 @@ import {
 import { openStore, cloudConfigured, teamLogin, teamLogout, LocalStore } from './store.js';
 import { Metronome, makeTapper } from './metronome.js';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 
 // ---------------- Utilidades ----------------
 
@@ -113,6 +113,11 @@ function pbLine(song) {
     <b>Playback · código ${song.pbCode}:</b> marcador Aux 1 · Nota <b>${cue.note}</b> · Velocidad <b>${cue.vel}</b></div>`;
 }
 
+// En el Mac director (modo Secciones) se muestra la velocidad de cada sección.
+function secVelFor(song) {
+  return prefs.live === 'director' && prefs.liveFollow === 'sections' ? (song.sectionOffset || 0) : null;
+}
+
 async function assignPbCode(song) {
   const code = nextPbCode();
   if (!code) { toast('No quedan códigos libres (máximo 254).'); return null; }
@@ -123,7 +128,9 @@ async function assignPbCode(song) {
 
 // ---------------- Render del cifrado ----------------
 
-export function renderChart(src, { semis = 0, flats = false, notation = 'en', showChords = true } = {}) {
+// secVel: si no es null, muestra junto a cada sección la velocidad del marcador de Playback
+// que la activa (número de sección − desfase de calibración).
+export function renderChart(src, { semis = 0, flats = false, notation = 'en', showChords = true, secVel = null } = {}) {
   const { blocks } = parseChordPro(src);
   const fmt = (c) => (isChord(c) ? formatChord(c, semis, flats, notation) : c);
   let html = '';
@@ -136,7 +143,9 @@ export function renderChart(src, { semis = 0, flats = false, notation = 'en', sh
     if (b.type === 'section') {
       if (si >= 0) html += '</div>';
       si++;
-      html += `<div class="sblk" data-sec="${si}"><div class="sec">${esc(b.label)}</div>`;
+      const vel = secVel === null ? null : si + 1 - secVel;
+      const velTag = vel === null ? '' : `<span class="secvel no-print" title="Velocidad del marcador G-1 en Playback">Vel ${vel >= 1 && vel <= 127 ? vel : '—'}</span>`;
+      html += `<div class="sblk" data-sec="${si}"><div class="sec">${esc(b.label)}</div>${velTag}`;
     }
     else if (b.type === 'comment') html += `<div class="cm">${esc(b.text)}</div>`;
     else if (b.type === 'tab') html += `<div class="tab">${esc(b.text)}</div>`;
@@ -553,7 +562,7 @@ function viewPlay(setId, index) {
       ${notesFor(song)}
       ${sectionMap(song.chordpro)}
       ${toolsHTML(baseKey, ctx.semis, song)}
-      ${renderChart(song.chordpro, { semis: ctx.semis, flats: useFlatsFor(key), notation: prefs.notation, showChords: prefs.showChords })}
+      ${renderChart(song.chordpro, { semis: ctx.semis, flats: useFlatsFor(key), notation: prefs.notation, showChords: prefs.showChords, secVel: secVelFor(song) })}
       ${otherNotes(song)}
       <div class="play-nav no-print">
         <a class="btn" href="#/play/${esc(setId)}/${i - 1}" ${i === 0 ? 'style="visibility:hidden"' : ''}>← Anterior</a>
@@ -687,7 +696,7 @@ function viewSong(id) {
         ${notesFor(song)}
         ${sectionMap(song.chordpro)}
         ${toolsHTML(baseKey, ctx.semis, song)}
-        ${song.chordpro ? renderChart(song.chordpro, { semis: ctx.semis, flats: useFlatsFor(key), notation: prefs.notation, showChords: prefs.showChords }) : '<div class="empty">Sin cifrado todavía. <a href="#/song/' + esc(id) + '/edit">Escribirlo</a></div>'}
+        ${song.chordpro ? renderChart(song.chordpro, { semis: ctx.semis, flats: useFlatsFor(key), notation: prefs.notation, showChords: prefs.showChords, secVel: secVelFor(song) }) : '<div class="empty">Sin cifrado todavía. <a href="#/song/' + esc(id) + '/edit">Escribirlo</a></div>'}
         ${otherNotes(song)}
       </div>
       <div data-role="pdf-tab" class="${tab === 'pdf' ? '' : 'hidden'}"><div data-role="pdf" class="muted">Cargando PDF…</div></div>
@@ -1041,7 +1050,7 @@ function viewSettings() {
             <li>MIDI Bus: <b>Aux 1</b></li>
             <li>Mensaje: <b>Nota</b></li>
             <li>Valor: <b>G-1</b> (no G0)</li>
-            <li>Velocidad: <b>número de la sección en orden</b> (1, 2, 3…), igual al mapa de arriba del cifrado (I · I · V1 · V2…). Si una sección se repite, cada vez lleva su propio número.</li>
+            <li>Velocidad: <b>número de la sección en orden</b> (1, 2, 3…), igual al mapa de arriba del cifrado (I · I · V1 · V2…). Si una sección se repite, cada vez lleva su propio número. En el Mac director, cada sección del cifrado muestra su número (<b>Vel 3</b>); si copias un marcador a otra parte de la canción, cámbiale la velocidad por la de la sección a la que llega.</li>
           </ul>
           <p><b>En la app:</b> el Mac con Playback (en Chrome) es el <b>Director</b>, con Canal MIDI 2. Los demás aparatos eligen <b>Sigue al director</b>. Todos conectados al equipo.</p>
           <p>Si una canción parte desfasada, en el director toca <b>Calibrar</b> mientras suena y luego la sección correcta.</p>
