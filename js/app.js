@@ -5,7 +5,7 @@ import {
 import { openStore, cloudConfigured, teamLogin, teamLogout, LocalStore } from './store.js';
 import { Metronome, makeTapper } from './metronome.js';
 
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.0.3';
 
 // ---------------- Utilidades ----------------
 
@@ -927,6 +927,18 @@ function viewSettings() {
           </div>` : ''}
       </fieldset>
 
+      <fieldset><legend>MIDI (Playback)</legend>
+        <p class="small muted">Monitor para ver qué manda Playback u otro equipo por MIDI. Funciona en <b>Chrome en el Mac</b> (Safari, iPhone y iPad no reciben MIDI).</p>
+        <div class="row">
+          <button class="btn small primary" data-act="midi-start" ${midiStop ? 'disabled' : ''}>${midiStop ? 'Monitor activo' : 'Activar monitor MIDI'}</button>
+          <button class="btn small" data-act="midi-copy">Copiar registro</button>
+          <button class="btn small" data-act="midi-clear">Limpiar</button>
+        </div>
+        <p class="small" data-role="midi-ports">${esc(midiState.ports)}</p>
+        <p class="small"><b>Reloj:</b> <span data-role="midi-clock">${esc(midiState.clock)}</span></p>
+        <pre class="small" data-role="midi-log" style="background:var(--surface-2);padding:10px;border-radius:8px;max-height:320px;overflow:auto;white-space:pre-wrap;margin:0">${esc(midiLog.length ? midiLog.join('\n') : 'Sin mensajes todavía.')}</pre>
+      </fieldset>
+
       <fieldset><legend>Respaldo</legend>
         <div class="row">
           <button class="btn small" data-act="export">Descargar respaldo</button>
@@ -1002,12 +1014,49 @@ function viewSettings() {
       await restart();
     } else if (act === 'upload-local') {
       await uploadLocal();
+    } else if (act === 'midi-start') {
+      const { midiSupported, startMonitor } = await import('./midi.js');
+      const ports = $('[data-role=midi-ports]');
+      if (!midiSupported()) { ports.textContent = 'Este navegador no recibe MIDI. Abre la app en Chrome en tu Mac.'; return; }
+      if (midiStop) { toast('El monitor ya está activo'); return; }
+      ports.textContent = 'Esperando permiso… acepta el aviso de Chrome para usar dispositivos MIDI.';
+      try {
+        midiStop = await startMonitor({
+          onPorts: (names) => {
+            midiState.ports = names.length ? 'Escuchando: ' + names.join(', ') : 'No hay entradas MIDI. Revisa que el IAC Driver esté activado (Configuración de Audio MIDI).';
+            const el = $('[data-role=midi-ports]'); if (el) el.textContent = midiState.ports;
+          },
+          onClock: (bpm) => { midiState.clock = bpm + ' BPM'; const el = $('[data-role=midi-clock]'); if (el) el.textContent = midiState.clock; },
+          onMessage: (m) => {
+            midiLog.push(`${m.time.toLocaleTimeString('es-CL')}  [${m.input}]  ${m.text}`);
+            if (midiLog.length > 300) midiLog.shift();
+            const el = $('[data-role=midi-log]');
+            if (el) { el.textContent = midiLog.join('\n'); el.scrollTop = el.scrollHeight; }
+          },
+        });
+        b.textContent = 'Monitor activo';
+        b.disabled = true;
+      } catch (err) {
+        ports.textContent = 'No se dio permiso para usar MIDI (' + (err.name || err) + ').';
+      }
+    } else if (act === 'midi-copy') {
+      try { await navigator.clipboard.writeText(midiLog.join('\n')); toast('Registro copiado. Pégalo en el chat.'); } catch { toast('No se pudo copiar'); }
+    } else if (act === 'midi-clear') {
+      midiLog.length = 0;
+      const el = $('[data-role=midi-log]'); if (el) el.textContent = 'Sin mensajes todavía.';
     }
   };
   view.addEventListener('change', onChange);
   view.addEventListener('click', onClick);
-  return () => { view.removeEventListener('change', onChange); view.removeEventListener('click', onClick); };
+  return () => {
+    view.removeEventListener('change', onChange); view.removeEventListener('click', onClick);
+  };
 }
+
+// El monitor sigue escuchando aunque la pantalla se redibuje.
+let midiStop = null;
+const midiLog = [];
+const midiState = { ports: '', clock: '—' };
 
 async function uploadLocal() {
   const local = store.local || new LocalStore();

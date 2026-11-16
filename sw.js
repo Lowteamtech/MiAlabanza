@@ -1,6 +1,6 @@
 // Service worker: guarda la app completa para que funcione sin señal.
 // Al publicar una versión nueva, cambia VERSION.
-const VERSION = 'mialabanza-v1.0.2';
+const VERSION = 'mialabanza-v1.0.3';
 const FILES = [
   './',
   './index.html',
@@ -12,6 +12,7 @@ const FILES = [
   './js/config.js',
   './js/metronome.js',
   './js/pdfimport.js',
+  './js/midi.js',
   './vendor/firebase.js',
   './vendor/pdf.min.js',
   './vendor/pdf.worker.min.js',
