@@ -199,6 +199,11 @@ details summary { cursor: pointer; font-weight: 700; padding: 6px 0; }
 .chart .cm { font-style: italic; color: var(--muted); margin: .4em 0; font-size: .85em; }
 .chart .tab { font-family: ui-monospace, Menlo, monospace; white-space: pre; font-size: .8em; overflow-x: auto; }
 .chart .sp { height: .7em; }
+.chart .ln[data-ck] { border-radius: 6px; transition: background-color .25s, box-shadow .25s; }
+.chart .ln.live { background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: -8px 0 0 var(--accent); }
+body.calibrating .chart .ln[data-ck] { cursor: pointer; outline: 1px dashed var(--accent); outline-offset: 2px; }
+.live-badge { font-size: 13px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: var(--surface-2); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw; }
+.live-badge.on { background: var(--accent); color: var(--accent-ink); }
 .chart.no-chords .ch { display: none; }
 .chart.no-chords .ln.chords-only { display: none; }
 

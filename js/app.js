@@ -5,7 +5,7 @@ import {
 import { openStore, cloudConfigured, teamLogin, teamLogout, LocalStore } from './store.js';
 import { Metronome, makeTapper } from './metronome.js';
 
-const APP_VERSION = '1.0.3';
+const APP_VERSION = '1.1.0';
 
 // ---------------- Utilidades ----------------
 
@@ -46,7 +46,7 @@ function longDate(iso) {
 
 const PREF_DEFAULTS = {
   name: '', instrument: 'general', notation: 'en', fontSize: 20, pedal: 'scroll',
-  theme: 'auto', showChords: true,
+  theme: 'auto', showChords: true, live: 'off', liveSong18: false,
 };
 function loadPrefs() {
   try { return { ...PREF_DEFAULTS, ...JSON.parse(localStorage.getItem('prefs') || '{}') }; } catch { return { ...PREF_DEFAULTS }; }
@@ -94,7 +94,11 @@ export function renderChart(src, { semis = 0, flats = false, notation = 'en', sh
   const { blocks } = parseChordPro(src);
   const fmt = (c) => (isChord(c) ? formatChord(c, semis, flats, notation) : c);
   let html = '';
+  // Párrafos de 2 líneas de letra = diapositivas de ProPresenter (para "Seguir a Playback").
+  let ck = -1;
+  let inChunk = 2;
   for (const b of blocks) {
+    if (b.type !== 'line') inChunk = 2;
     if (b.type === 'section') html += `<div class="sec">${esc(b.label)}</div>`;
     else if (b.type === 'comment') html += `<div class="cm">${esc(b.text)}</div>`;
     else if (b.type === 'tab') html += `<div class="tab">${esc(b.text)}</div>`;
@@ -102,14 +106,20 @@ export function renderChart(src, { semis = 0, flats = false, notation = 'en', sh
     else if (b.type === 'line') {
       const hasChord = b.segments.some((s) => s.chord);
       const hasText = b.segments.some((s) => s.text.trim());
+      let attr = '';
+      if (hasText) {
+        if (inChunk >= 2) { ck++; inChunk = 0; }
+        inChunk++;
+        attr = ` data-ck="${ck}"`;
+      }
       if (!hasChord) {
-        html += `<div class="ln lyr"><span class="ly">${esc(b.segments.map((s) => s.text).join(''))}</span></div>`;
+        html += `<div class="ln lyr"${attr}><span class="ly">${esc(b.segments.map((s) => s.text).join(''))}</span></div>`;
       } else if (!hasText) {
         html += `<div class="ln chords-only">${b.segments.filter((s) => s.chord).map((s) => `<span class="seg"><span class="ch">${esc(fmt(s.chord))}</span></span>`).join('')}</div>`;
       } else if (!showChords) {
-        html += `<div class="ln lyr"><span class="ly">${esc(b.segments.map((s) => s.text).join(''))}</span></div>`;
+        html += `<div class="ln lyr"${attr}><span class="ly">${esc(b.segments.map((s) => s.text).join(''))}</span></div>`;
       } else {
-        html += '<div class="ln">' + b.segments.map((s) => {
+        html += `<div class="ln"${attr}>` + b.segments.map((s) => {
           const ch = s.chord ? esc(fmt(s.chord)) : '';
           const text = s.text || (s.chord ? ' ' : '');
           return `<span class="seg"><span class="ch">${ch || '&#8203;'}</span><span class="ly">${esc(text)}</span></span>`;
@@ -491,7 +501,7 @@ function viewPlay(setId, index) {
     const key = baseKey ? transposeKey(baseKey, ctx.semis) : '';
     topbar(`${i + 1}/${total} · ${song.title}`, {
       back: `#/set/${setId}`,
-      actions: `<a class="btn small no-print" href="#/song/${esc(song.id)}/edit" aria-label="Editar canción">Editar</a>`,
+      actions: `<span class="live-badge hidden" data-role="live"></span><a class="btn small no-print" href="#/song/${esc(song.id)}/edit" aria-label="Editar canción">Editar</a>`,
     });
     $('#view').innerHTML = `
       <div class="song-head">
@@ -511,10 +521,38 @@ function viewPlay(setId, index) {
         ${i < total - 1 ? `<a class="btn primary" href="#/play/${esc(setId)}/${i + 1}">Siguiente: ${esc(nextSong?.title || '')} →</a>` : `<a class="btn" href="#/set/${esc(setId)}">Fin del repertorio</a>`}
       </div>`;
     const tools = $('.tools');
-    wireTools(tools, { ...ctx, onChange: (v) => { ctx.semis = v; const y = scrollY; draw(); scrollTo(0, y); } });
+    if (prefs.live === 'director') tools.insertAdjacentHTML('beforeend', '<button class="btn small" data-act="calibrate" title="Indica en qué línea va la diapositiva actual">Calibrar diapo</button>');
+    wireTools(tools, { ...ctx, onChange: (v) => { ctx.semis = v; const y = scrollY; draw(); scrollTo(0, y); highlightSlide(false); } });
+    updateLiveBadge();
   };
   draw();
   scrollTo(0, 0);
+  if (prefs.live === 'director') {
+    const st = live.state;
+    if (!st || st.setId !== setId || st.index !== i) publishLive({ setId, index: i, slide: 0 });
+  }
+  highlightSlide(true);
+
+  const onChartClick = (e) => {
+    if (e.target.closest('[data-act=calibrate]')) {
+      if (!live.state?.slide) { toast('Primero dale play en Playback para recibir una diapositiva.', 3500); return; }
+      live.calibrating = !live.calibrating;
+      document.body.classList.toggle('calibrating', live.calibrating);
+      if (live.calibrating) toast(`Toca la línea donde parte la diapositiva ${live.state.slide}`, 4000);
+      return;
+    }
+    const ln = e.target.closest('.chart .ln[data-ck]');
+    if (ln && live.calibrating) {
+      live.calibrating = false;
+      document.body.classList.remove('calibrating');
+      const offset = +ln.dataset.ck - (live.state.slide - 1);
+      store.put('songs', stamp({ ...songById(song.id), slideOffset: offset }));
+      toast('Calibrado. Quedó guardado para esta canción.');
+      song.slideOffset = offset;
+      highlightSlide(false);
+    }
+  };
+  $('#view').addEventListener('click', onChartClick);
 
   const go = (dir) => {
     const j = i + dir;
@@ -524,7 +562,12 @@ function viewPlay(setId, index) {
     if (prefs.pedal === 'song') go(dir);
     else if (!scrollPage(dir)) go(dir);
   });
-  return () => { offPedal(); document.body.classList.remove('playing'); };
+  return () => {
+    offPedal();
+    $('#view').removeEventListener('click', onChartClick);
+    live.calibrating = false;
+    document.body.classList.remove('playing', 'calibrating');
+  };
 }
 
 function viewSongs() {
@@ -927,6 +970,16 @@ function viewSettings() {
           </div>` : ''}
       </fieldset>
 
+      <fieldset><legend>Seguir a Playback</legend>
+        <label class="f">Este aparato…<select data-p="live">
+          <option value="off"${prefs.live === 'off' ? ' selected' : ''}>No sigue a Playback</option>
+          <option value="director"${prefs.live === 'director' ? ' selected' : ''}>Es el DIRECTOR (el Mac con Playback, en Chrome)</option>
+          <option value="follow"${prefs.live === 'follow' ? ' selected' : ''}>Sigue al director (iPad, iPhone, otro Mac)</option>
+        </select></label>
+        <label class="row small" style="margin-top:10px"><input type="checkbox" data-p="liveSong18" ${prefs.liveSong18 ? 'checked' : ''}> Cambiar de canción cuando Playback cambia (nota #18). Activar solo si se probó.</label>
+        <p class="small muted">El director recibe el MIDI de la pista "Letras" de Playback (IAC Driver Bus 1). Cada diapositiva se marca como 2 líneas de letra. Si una canción parte desfasada, en el director usa <b>Calibrar diapo</b> mientras suena.${store.mode === 'local' ? ' <b>Para que los demás aparatos sigan al director, todos deben estar conectados al equipo.</b>' : ''}</p>
+      </fieldset>
+
       <fieldset><legend>MIDI (Playback)</legend>
         <p class="small muted">Monitor para ver qué manda Playback u otro equipo por MIDI. Funciona en <b>Chrome en el Mac</b> (Safari, iPhone y iPad no reciben MIDI).</p>
         <div class="row">
@@ -958,8 +1011,10 @@ function viewSettings() {
   const onChange = async (e) => {
     const t = e.target;
     if (t.dataset.p) {
-      prefs[t.dataset.p] = t.dataset.p === 'fontSize' ? Math.max(12, Math.min(44, +t.value || 20)) : t.value;
+      prefs[t.dataset.p] = t.type === 'checkbox' ? t.checked
+        : t.dataset.p === 'fontSize' ? Math.max(12, Math.min(44, +t.value || 20)) : t.value;
       savePrefs();
+      if (t.dataset.p === 'live') setupLive();
       toast('Ajuste guardado');
     } else if (t.dataset.role === 'import' && t.files[0]) {
       try {
@@ -1070,6 +1125,128 @@ async function uploadLocal() {
   toast(`Subidos: ${songs.length} canciones, ${sets.length} repertorios, ${pdfs.length} PDF`, 3500);
 }
 
+// ---------------- En vivo: Seguir a Playback ----------------
+// Director: el Mac que corre Playback recibe su MIDI y publica canción/diapositiva.
+// Seguir: los demás aparatos escuchan ese estado por Firebase y se mueven solos.
+
+const live = { state: null, unsub: null, midiStop: null, calibrating: false, ports: [], midiError: null };
+const LIVE_FRESH_MS = 2 * 3600 * 1000;
+
+function liveRoute() {
+  const p = route();
+  return p[0] === 'play' && p[1] ? { setId: p[1], index: Math.max(0, +p[2] || 0) } : null;
+}
+
+function publishLive(patch) {
+  if (prefs.live !== 'director') return;
+  const r = liveRoute();
+  const st = { slide: 0, playing: false, ...(live.state || {}), ...patch, at: Date.now(), by: prefs.name || '' };
+  if (r && patch.setId === undefined) {
+    if (st.setId !== r.setId || st.index !== r.index) st.slide = patch.slide ?? 0;
+    st.setId = r.setId; st.index = r.index;
+  }
+  live.state = st;
+  store.putLive(st);
+  highlightSlide(true);
+  updateLiveBadge();
+}
+
+function applyRemoteLive(st) {
+  if (!st || prefs.live !== 'follow') return;
+  if (Date.now() - (st.at || 0) > LIVE_FRESH_MS) return; // estado viejo: no mover a nadie
+  live.state = st;
+  updateLiveBadge();
+  const p = route();
+  const r = liveRoute();
+  const canMove = !p.length || p[0] === 'play' || p[0] === 'set';
+  if (canMove && st.setId && setById(st.setId) && (!r || r.setId !== st.setId || r.index !== st.index)) {
+    location.hash = `#/play/${st.setId}/${st.index}`;
+    return;
+  }
+  highlightSlide(true);
+}
+
+function highlightSlide(scroll) {
+  $$('.chart .ln.live').forEach((e) => e.classList.remove('live'));
+  const st = live.state;
+  const r = liveRoute();
+  if (prefs.live === 'off' || !st || !r || st.setId !== r.setId || st.index !== r.index || !st.slide) return;
+  const s = setById(r.setId);
+  const song = songById(s?.items?.[r.index]?.songId);
+  if (!song) return;
+  const ck = st.slide - 1 + (song.slideOffset || 0);
+  const els = $$(`.chart .ln[data-ck="${ck}"]`);
+  if (!els.length) return;
+  els.forEach((e) => e.classList.add('live'));
+  if (scroll) {
+    const y = els[0].getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.28;
+    window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+  }
+}
+
+function updateLiveBadge() {
+  const el = $('[data-role=live]');
+  if (!el) return;
+  if (prefs.live === 'off') { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const st = live.state;
+  let txt;
+  if (prefs.live === 'director' && live.midiError) txt = '⚠ ' + live.midiError;
+  else if (!st || (prefs.live === 'follow' && Date.now() - (st.at || 0) > LIVE_FRESH_MS)) {
+    txt = prefs.live === 'director' ? '● Director · esperando Playback' : 'Siguiendo · sin señal del director';
+  } else {
+    const parts = [st.playing ? '▶' : '■'];
+    if (st.slide) parts.push('Diapo ' + st.slide);
+    if (st.bpm) parts.push(st.bpm + ' BPM');
+    txt = parts[0] + ' ' + parts.slice(1).join(' · ');
+  }
+  el.textContent = txt;
+  el.title = prefs.live === 'follow' ? 'Siguiendo al director' : 'Este aparato es el director';
+  el.classList.toggle('on', !!st?.playing && !live.midiError);
+}
+
+async function setupLive() {
+  live.unsub?.(); live.unsub = null;
+  live.midiStop?.(); live.midiStop = null;
+  live.midiError = null;
+  live.state = null;
+  if (prefs.live === 'follow') {
+    live.unsub = store.subscribeLive(applyRemoteLive);
+  } else if (prefs.live === 'director') {
+    const m = await import('./midi.js');
+    if (!m.midiSupported()) {
+      live.midiError = 'Este navegador no recibe MIDI (usa Chrome en el Mac)';
+    } else {
+      try {
+        live.midiStop = await m.startDirector({
+          onSlide: (n) => publishLive({ slide: n, playing: true }),
+          onSong: (n) => {
+            if (!prefs.liveSong18) return;
+            const r = liveRoute();
+            const s = r && setById(r.setId);
+            if (s && n >= 1 && n <= (s.items || []).length && n - 1 !== r.index) {
+              location.hash = `#/play/${r.setId}/${n - 1}`;
+            }
+          },
+          onStart: () => publishLive({ playing: true }),
+          onStop: () => publishLive({ playing: false }),
+          onClock: (bpm) => {
+            if (!live.state || Math.abs((live.state.bpm || 0) - bpm) >= 1.5) publishLive({ bpm: Math.round(bpm) });
+          },
+          onPorts: (names) => { live.ports = names; },
+        });
+      } catch (e) {
+        live.midiError = 'Chrome no dio permiso para MIDI';
+      }
+    }
+  }
+  updateLiveBadge();
+  highlightSlide(false);
+}
+
+// Para pruebas desde la consola del navegador: simula lo que manda Playback.
+window.__mialabanzaLive = { publishLive, applyRemoteLive, get state() { return live.state; } };
+
 // ---------------- Router ----------------
 
 function route() {
@@ -1140,6 +1317,7 @@ async function restart() {
     store.subscribe('setlists', (d) => { state.setlists = d; onData(); }),
   ];
   render();
+  setupLive();
 }
 
 window.addEventListener('online', onData);

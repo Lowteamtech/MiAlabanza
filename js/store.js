@@ -17,7 +17,12 @@ class LocalStore {
     this.listeners = {};
     this.cache = {};
     this.channel = 'BroadcastChannel' in self ? new BroadcastChannel('repertorio-sync') : null;
-    if (this.channel) this.channel.onmessage = (e) => this._reload(e.data);
+    if (this.channel) {
+      this.channel.onmessage = (e) => {
+        if (e.data && e.data.live) { this.liveState = e.data.live; this.liveCbs?.forEach((cb) => cb(e.data.live)); }
+        else this._reload(e.data);
+      };
+    }
   }
 
   async init() {
@@ -90,6 +95,18 @@ class LocalStore {
   async removePdf(id) { await this._tx('pdfs', 'readwrite', (st) => st.delete(id)); }
 
   async allPdfs() { return this._tx('pdfs', 'readonly', (st) => st.getAll()); }
+
+  // Estado "en vivo" (canción y diapositiva actual). En modo local solo llega a otras pestañas de este equipo.
+  subscribeLive(cb) {
+    (this.liveCbs ||= new Set()).add(cb);
+    if (this.liveState) cb(this.liveState);
+    return () => this.liveCbs.delete(cb);
+  }
+
+  putLive(state) {
+    this.liveState = state;
+    this.channel?.postMessage({ live: state });
+  }
 
   status() { return { mode: 'local', label: 'Solo este dispositivo' }; }
 }
@@ -209,6 +226,18 @@ class CloudStore {
       for (let i = 0; i < n; i++) batch.delete(this.fb.doc(this.db, 'pdfchunks', `${id}_${i}`));
       await batch.commit();
     } catch (e) { console.error('removePdf', e); }
+  }
+
+  // Estado "en vivo": un solo documento que el Mac director actualiza y los demás escuchan.
+  subscribeLive(cb) {
+    return this.fb.onSnapshot(this.fb.doc(this.db, 'live', 'current'),
+      (snap) => cb(snap.exists() ? snap.data() : null),
+      (err) => console.error('live', err));
+  }
+
+  putLive(state) {
+    this.fb.setDoc(this.fb.doc(this.db, 'live', 'current'), JSON.parse(JSON.stringify(state)))
+      .catch((e) => console.error('live', e));
   }
 
   status() {
