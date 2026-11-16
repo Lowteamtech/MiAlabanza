@@ -5,7 +5,7 @@ import {
 import { openStore, cloudConfigured, teamLogin, teamLogout, LocalStore } from './store.js';
 import { Metronome, makeTapper } from './metronome.js';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 
 // ---------------- Utilidades ----------------
 

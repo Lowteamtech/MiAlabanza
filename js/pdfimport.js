@@ -71,6 +71,64 @@ function charWidth(ch) {
   return w;
 }
 
+// Une pedazos de un mismo acorde que el PDF trae separados:
+// "E" + "m" + "7" (superíndice), "D" + "add4", "C" + "2". Si entre la letra y el resto
+// queda un hueco, ahí había una alteración dibujada (♭ o ♯) que no viene como texto.
+function mergeChordFragments(line, charW, flags) {
+  const out = [];
+  for (const it of line.items) {
+    if (!it.str.trim()) { out.push(it); continue; }
+    let k = out.length - 1;
+    while (k >= 0 && !out[k].str.trim()) k--;
+    const prev = k >= 0 ? out[k] : null;
+    if (prev) {
+      const gap = it.x - (prev.x + prev.w);
+      const joined = prev.str + it.str;
+      const superscript = it.h < prev.h * 0.85;
+      if (gap > -1 && gap < charW * 2.2 && isChord(joined) && /^[A-G]/.test(prev.str)
+        && (!isChord(it.str) || superscript)) {
+        if (/^[A-G]$/.test(prev.str) && gap > charW * 0.5) flags.missingAccidental = true;
+        out.splice(k, out.length - k, { ...prev, str: joined, w: it.x + it.w - prev.x });
+        continue;
+      }
+    }
+    out.push(it);
+  }
+  line.items = out;
+  return line;
+}
+
+// Alteraciones de la armadura de una tonalidad: { C:'', D:'b', ... }
+function keySignature(key) {
+  const m = /^([A-G])([#b]?)(m?)/.exec(key || '');
+  if (!m) return null;
+  const LET = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+  const NAT = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  const steps = m[3] ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11];
+  const tonic = (NAT[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0) + 12) % 12;
+  const sig = {};
+  const start = LET.indexOf(m[1]);
+  for (let i = 0; i < 7; i++) {
+    const letter = LET[(start + i) % 7];
+    const diff = ((tonic + steps[i] - NAT[letter] + 18) % 12) - 6;
+    sig[letter] = diff === -1 ? 'b' : diff === 1 ? '#' : '';
+  }
+  return sig;
+}
+
+function applySignature(chordpro, key) {
+  const sig = keySignature(key);
+  if (!sig) return chordpro;
+  return chordpro.replace(/\[([^\]]+)\]/g, (all, c) => {
+    if (!isChord(c)) return all;
+    let s = c.replace(/^([A-G])(?![#b♯♭])/, (x, l) => l + sig[l]);
+    s = s.replace(/\/([A-G])(?![#b♯♭])/, (x, l) => '/' + l + sig[l]);
+    return `[${s}]`;
+  });
+}
+
+const titleCase = (s) => s.toLowerCase().replace(/(^|\s|-)(\p{L})/gu, (x, a, b) => a + b.toUpperCase());
+
 // Construye el texto de la línea y la posición X de cada carácter.
 function buildLine(line, charW) {
   let text = '';
@@ -143,7 +201,13 @@ function mergeByX(chordLine, lyric, charW) {
   return text.replace(/\s+$/, '');
 }
 
-const JUNK = [/^(page|página|pag\.?)\s*\d+(\s*(of|de)\s*\d+)?$/i, /chartbuilder/i, /multitracks\.com/i, /^\d+\s*\/\s*\d+$/];
+const JUNK = [
+  /^(page|página|pagina|pag\.?)\s*:?\s*\d+(\s*((of|de)|\/)\s*\d+)?$/i, /chartbuilder/i, /multitracks\.com/i,
+  /secuencias\.com/i, /^charts$/i, /^\d+\s*\/\s*\d+$/, /^\d{1,2}$/,
+];
+const PAGE_TAIL = /\s*\b(page|página|pagina|pag\.?)\s*:?\s*\d+\s*(((of|de)|\/)\s*\d+)?\s*$/i;
+const firstCell = (t) => t.trim().split(/\s{3,}/)[0];
+const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
 export async function importPdf(file) {
   const pdfjs = await loadPdfJs();
@@ -152,6 +216,7 @@ export async function importPdf(file) {
 
   const allLines = [];
   let allText = '';
+  const flags = { missingAccidental: false };
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const vp = page.getViewport({ scale: 1 });
@@ -160,10 +225,13 @@ export async function importPdf(file) {
     for (const colItems of splitColumns(items, vp.width)) {
       const real = colItems.filter((i) => i.str.trim() && i.w > 0);
       const charW = median(real.map((i) => i.w / i.str.length)) || 5;
-      const lines = groupLines(colItems).map((l) => buildLine(l, charW)).filter((l) => l.text.trim());
-      for (const l of lines) { l.charW = charW; l.page = p; }
+      const colX0 = Math.min(...real.map((i) => i.x));
+      const colX1 = Math.max(...real.map((i) => i.x + i.w));
+      const lines = groupLines(colItems)
+        .map((l) => buildLine(mergeChordFragments(l, charW, flags), charW))
+        .filter((l) => l.text.trim());
+      for (const l of lines) { l.charW = charW; l.page = p; l.colX0 = colX0; l.colW = colX1 - colX0; }
       allLines.push(...lines);
-      if (allLines.length) allLines.push({ text: '', blank: true });
     }
   }
   allText = allLines.map((l) => l.text).join('\n');
@@ -183,28 +251,47 @@ export async function importPdf(file) {
     const maxH = Math.max(...firstPage.map((l) => l.h));
     const tLine = firstPage.find((l) => l.h === maxH && !isChordLine(l.text) && !isSectionHeader(l.text));
     if (tLine) {
-      title = tLine.text.trim().replace(/\s{2,}/g, ' ');
+      title = firstCell(tLine.text.replace(PAGE_TAIL, '')).replace(/\s{2,}/g, ' ');
       skip.add(tLine);
       const after = firstPage[firstPage.indexOf(tLine) + 1];
-      if (after && !isChordLine(after.text) && !isSectionHeader(after.text) && !isMetaLine(after.text)
-        && after.text.trim().length < 60 && after.h <= tLine.h) {
-        artist = after.text.trim().replace(/\s{2,}/g, ' ');
+      const aText = after ? firstCell(after.text) : '';
+      if (after && !isChordLine(aText) && !isSectionHeader(aText) && !isMetaLine(aText)
+        && aText.length < 60 && after.h <= tLine.h) {
+        artist = aText.replace(/\s{2,}/g, ' ');
         skip.add(after);
       }
     }
   }
 
   const out = [];
+  let afterHeader = false; // justo después de un encabezado de sección: notas de dinámica
   for (let i = 0; i < allLines.length; i++) {
     const l = allLines[i];
     if (skip.has(l)) continue;
     if (l.blank) { out.push(''); continue; }
-    const t = l.text.replace(/\s*\b(page|página|pag\.?)\s*\d+\s*((of|de)\s*\d+)?\s*$/i, '');
+    const t = l.text.replace(PAGE_TAIL, '');
     if (!t.trim()) continue;
     if (JUNK.some((re) => re.test(t.trim()))) continue;
+    if (title && norm(firstCell(t)) === norm(title)) continue; // encabezado repetido en cada página
     if (isMetaLine(t)) continue;
-    if (isSectionHeader(t)) { out.push('', `{c: ${t.trim().replace(/:\s*$/, '')}}`); continue; }
-    if (/^\s*(©|\(c\)|ccli|copyright)/i.test(t)) { out.push(`{c: ${t.trim()}}`); continue; }
+    const toks = t.trim().split(/\s+/);
+    if (toks.length >= 5 && toks.every((w) => w.length <= 3) && !isChordLine(t)) continue; // mapa de secciones (V1 V2 Pr C…)
+    if (isSectionHeader(t)) { out.push('', `{c: ${t.trim().replace(/:\s*$/, '')}}`); afterHeader = true; continue; }
+    // Encabezado con insignia: "V1 VERSO 1", "C` CORO 1", "Pr PRE CORO"
+    const badge = /^\s*\S{1,3}\s+(.{3,})$/.exec(t);
+    if (badge && isSectionHeader(badge[1])) {
+      const name = badge[1].trim().replace(/:\s*$/, '');
+      out.push('', `{c: ${name === name.toUpperCase() ? titleCase(name) : name}}`);
+      afterHeader = true;
+      continue;
+    }
+    // Notas de la sección alineadas a la derecha ("Baja Intensidad", "Bombo en 1/4")
+    if (afterHeader && !isChordLine(t) && l.x0 > l.colX0 + l.colW * 0.3) {
+      out.push(`{c: ${t.trim().replace(/\s{2,}/g, ' ')}}`);
+      continue;
+    }
+    afterHeader = false;
+    if (/^\s*(©|\(c\)|ccli|copyright|compositor)/i.test(t)) { out.push(`{c: ${t.trim().replace(/\s{2,}/g, ' ')}}`); continue; }
     if (isChordLine(t)) {
       const next = allLines[i + 1];
       const close = next && !next.blank && next.page === l.page && (l.y - next.y) < Math.max(l.h, next.h) * 2.6;
@@ -226,8 +313,17 @@ export async function importPdf(file) {
     out.push(t);
   }
 
-  const chordpro = out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  return { scanned: false, chordpro, title, artist, ...meta, rawText: allText };
+  let chordpro = out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+
+  // Bemoles/sostenidos dibujados (no vienen como texto): se completan con la armadura del tono.
+  const explicitAcc = /\[[A-G][#b♯♭]|\/[A-G][#b♯♭]/.test(chordpro);
+  const keyHasAcc = /^[A-G][#b]/.test(meta.key || '');
+  let accidentalsInferred = false;
+  if (meta.key && !explicitAcc && (keyHasAcc || flags.missingAccidental)) {
+    chordpro = applySignature(chordpro, meta.key);
+    accidentalsInferred = true;
+  }
+  return { scanned: false, chordpro, title, artist, ...meta, rawText: allText, accidentalsInferred };
 }
 
 // Dibuja las páginas de un PDF dentro de un contenedor.
