@@ -5,7 +5,7 @@ import {
 import { openStore, cloudConfigured, teamLogin, teamLogout, LocalStore } from './store.js';
 import { Metronome, makeTapper } from './metronome.js';
 
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.3.0';
 
 // ---------------- Utilidades ----------------
 
@@ -46,7 +46,7 @@ function longDate(iso) {
 
 const PREF_DEFAULTS = {
   name: '', instrument: 'general', notation: 'en', fontSize: 20, pedal: 'scroll',
-  theme: 'auto', showChords: true, live: 'off', liveSong18: false, liveFollow: 'sections', liveChannel: 0,
+  theme: 'auto', showChords: true, live: 'off', liveSongCode: true, liveFollow: 'sections', liveChannel: 0,
 };
 function loadPrefs() {
   try { return { ...PREF_DEFAULTS, ...JSON.parse(localStorage.getItem('prefs') || '{}') }; } catch { return { ...PREF_DEFAULTS }; }
@@ -86,6 +86,39 @@ function toast(msg, ms = 2200) {
   t.classList.add('show');
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+// ---------------- Código de canción para Playback ----------------
+// Cada canción tiene un número. En Playback, un marcador al inicio de la canción lo envía:
+// códigos 1–127 → Nota F#-1, velocidad = código; 128–254 → Nota G#-1, velocidad = código − 127.
+
+function pbCue(code) {
+  const c = +code;
+  if (!c || c < 1 || c > 254) return null;
+  return c <= 127 ? { note: 'F#-1', vel: c } : { note: 'G#-1', vel: c - 127 };
+}
+
+function nextPbCode() {
+  const used = new Set(state.songs.map((x) => +x.pbCode).filter(Boolean));
+  for (let c = 1; c <= 254; c++) if (!used.has(c)) return c;
+  return null;
+}
+
+function pbLine(song) {
+  const cue = pbCue(song.pbCode);
+  if (!cue) {
+    return `<div class="pb-line no-print"><span class="muted">Sin código para Playback.</span> <button class="btn small" data-act="pb-assign">Asignar código</button></div>`;
+  }
+  return `<div class="pb-line no-print" title="Marcador al inicio de esta canción en Playback">
+    <b>Playback · código ${song.pbCode}:</b> marcador Aux 1 · Nota <b>${cue.note}</b> · Velocidad <b>${cue.vel}</b></div>`;
+}
+
+async function assignPbCode(song) {
+  const code = nextPbCode();
+  if (!code) { toast('No quedan códigos libres (máximo 254).'); return null; }
+  await store.put('songs', stamp({ ...songById(song.id), pbCode: code }));
+  toast(`Código ${code} asignado`);
+  return code;
 }
 
 // ---------------- Render del cifrado ----------------
@@ -571,7 +604,7 @@ function viewSongs() {
       .sort((a, b) => (a.title || '').localeCompare(b.title || '', 'es'));
     $('[data-role=list]').innerHTML = list.length ? list.map((s) => `<li><a class="item" href="#/song/${esc(s.id)}">
       <div class="grow"><div class="t">${esc(s.title || 'Sin título')}</div><div class="s">${esc(s.artist || '')}</div></div>
-      <div class="meta">${s.key ? `<span class="pill">${esc(displayKey(s.key))}</span>` : ''} ${s.bpm ? esc(s.bpm) + ' bpm' : ''}${s.hasPdf ? ' · PDF' : ''}</div></a></li>`).join('')
+      <div class="meta">${s.key ? `<span class="pill">${esc(displayKey(s.key))}</span>` : ''} ${s.bpm ? esc(s.bpm) + ' bpm' : ''}${s.hasPdf ? ' · PDF' : ''}${s.pbCode ? ` · <span class="pill" title="Código Playback">#${esc(s.pbCode)}</span>` : ''}</div></a></li>`).join('')
       : (state.songs.length ? '<div class="empty">Sin resultados.</div>'
         : `<div class="empty"><p><b>Tu biblioteca está vacía.</b><br>Importa tus PDF de cifrados o escribe una canción.</p>
           <label class="btn primary" style="cursor:pointer">Importar PDF<input type="file" accept="application/pdf,.pdf" multiple hidden data-role="pdf"></label></div>`);
@@ -590,6 +623,8 @@ async function importPdfs(files) {
   const { importPdf } = await import('./pdfimport.js');
   let ok = 0;
   const created = [];
+  const usedCodes = new Set(state.songs.map((x) => +x.pbCode).filter(Boolean));
+  const takeCode = () => { for (let c = 1; c <= 254; c++) if (!usedCodes.has(c)) { usedCodes.add(c); return c; } return undefined; };
   for (const f of files) {
     toast(`Leyendo ${f.name}…`, 10000);
     try {
@@ -609,6 +644,7 @@ async function importPdfs(files) {
         pdfName: f.name,
         createdAt: Date.now(),
         needsReview: true,
+        pbCode: takeCode(),
       });
       await store.putPdf(id, f, f.name);
       await store.put('songs', song);
@@ -643,6 +679,7 @@ function viewSong(id) {
         <h2>${esc(song.title)}</h2>
         <div class="by">${esc(song.artist || '')}</div>
         <div class="meta-row">${songMetaPills(song, key)}</div>
+        ${pbLine(song)}
       </div>
       ${song.needsReview ? '<div class="notes-box"><b>Importado de PDF</b>Revisa que los acordes hayan quedado sobre la sílaba correcta. Toca <a href="#/song/' + esc(id) + '/edit">Editar</a> para corregir.</div>' : ''}
       ${song.hasPdf ? `<div class="tabs no-print"><button class="btn small ${tab === 'chart' ? 'on' : ''}" data-tab="chart">Cifrado</button><button class="btn small ${tab === 'pdf' ? 'on' : ''}" data-tab="pdf">PDF original</button></div>` : ''}
@@ -690,11 +727,13 @@ function viewSong(id) {
   const onTop = (e) => {
     if (e.target.closest('[data-act=add-to-set]')) addToSetlist(song);
   };
+  const onAssign = (e) => { if (e.target.closest('[data-act=pb-assign]')) assignPbCode(song); };
+  view.addEventListener('click', onAssign);
   view.addEventListener('click', onClick);
   $('#topbar').addEventListener('click', onTop);
   const offPedal = onPedal((dir) => scrollPage(dir));
   return () => {
-    view.removeEventListener('click', onClick); view.removeEventListener('click', onCal);
+    view.removeEventListener('click', onClick); view.removeEventListener('click', onCal); view.removeEventListener('click', onAssign);
     $('#topbar').removeEventListener('click', onTop); offPedal();
     live.calibrating = false; document.body.classList.remove('calibrating');
   };
@@ -750,6 +789,7 @@ function viewEdit(id) {
         <label class="f">Tono original<input type="text" data-f="key" value="${esc(song.key)}" list="keylist" placeholder="Ej.: G"></label>
         <label class="f">BPM<input type="number" inputmode="numeric" min="20" max="300" data-f="bpm" value="${esc(song.bpm)}"></label>
         <label class="f">Compás<select data-f="time">${TIMES.map((t) => `<option${t === song.time ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
+        <label class="f">Código Playback<input type="number" inputmode="numeric" min="1" max="254" data-f="pbCode" value="${esc(song.pbCode || '')}" placeholder="Automático"></label>
       </div>
       <datalist id="keylist">${keyList.map((k) => `<option value="${k}">`).join('')}</datalist>
 
@@ -814,6 +854,14 @@ function viewEdit(id) {
   const save = async () => {
     collect();
     if (!song.title) { toast('Falta el título'); $('[data-f=title]').focus(); return; }
+    if (song.pbCode === '' || song.pbCode == null) delete song.pbCode;
+    else {
+      song.pbCode = Math.round(+song.pbCode);
+      if (!(song.pbCode >= 1 && song.pbCode <= 254)) { toast('El código Playback va de 1 a 254'); return; }
+      const dup = state.songs.find((x) => x.id !== song.id && +x.pbCode === song.pbCode);
+      if (dup) { toast(`El código ${song.pbCode} ya lo usa «${dup.title}»`, 3500); return; }
+    }
+    if (!song.pbCode) { const c = nextPbCode(); if (c) song.pbCode = c; }
     // Si el cifrado trae {title}/{key}/etc. y los campos están vacíos, se usan.
     const m = parseChordPro(song.chordpro).meta;
     if (!song.artist && m.artist) song.artist = m.artist;
@@ -978,9 +1026,16 @@ function viewSettings() {
             ${['Todos', ...Array.from({ length: 16 }, (_, k) => 'Canal ' + (k + 1))].map((l, k) => `<option value="${k}"${+prefs.liveChannel === k ? ' selected' : ''}>${l}</option>`).join('')}
           </select></label>
         </div>
-        <label class="row small" style="margin-top:10px;flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" style="margin-top:4px;flex:none" data-p="liveSong18" ${prefs.liveSong18 ? 'checked' : ''}> Cambiar de canción cuando Playback cambia (nota #18). Activar solo si se probó.</label>
+        <label class="row small" style="margin-top:10px;flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" style="margin-top:4px;flex:none" data-p="liveSongCode" ${prefs.liveSongCode ? 'checked' : ''}> Abrir sola la canción que arranca en Playback (marcador con el código de la canción).</label>
+        <div class="row" style="margin-top:10px"><button class="btn small" data-act="pb-assign-all">Asignar códigos a todas las canciones</button>
+          <span class="small muted">${state.songs.filter((x) => x.pbCode).length} de ${state.songs.length} con código</span></div>
         <details class="small" style="margin-top:10px"><summary>Cómo configurar Playback</summary>
           <p><b>En Playback → Configuración → MIDI:</b> Aux 1 → Driver IAC Bus 1 → Canal 2.</p>
+          <p><b>Marcador de canción</b> (uno por canción, en la cuenta inicial, antes de la primera sección):</p>
+          <ul>
+            <li>MIDI Bus: <b>Aux 1</b> · Mensaje: <b>Nota</b></li>
+            <li>Valor y Velocidad: los que muestra cada canción en la app, bajo el tono (ej.: <b>F#-1</b>, velocidad <b>12</b>).</li>
+          </ul>
           <p><b>Cada marcador de sección</b> (al inicio de cada caja):</p>
           <ul>
             <li>MIDI Bus: <b>Aux 1</b></li>
@@ -1082,6 +1137,19 @@ function viewSettings() {
       if (!confirm('¿Desconectar este dispositivo del equipo? Volverá al modo local.')) return;
       await teamLogout();
       await restart();
+    } else if (act === 'pb-assign-all') {
+      const missing = state.songs.filter((x) => !x.pbCode).sort((a, b) => (a.title || '').localeCompare(b.title || '', 'es'));
+      if (!missing.length) { toast('Todas las canciones ya tienen código'); return; }
+      const used = new Set(state.songs.map((x) => +x.pbCode).filter(Boolean));
+      let c = 1; let n = 0;
+      for (const song of missing) {
+        while (used.has(c)) c++;
+        if (c > 254) break;
+        used.add(c);
+        await store.put('songs', stamp({ ...song, pbCode: c }));
+        n++;
+      }
+      toast(`${n} canciones recibieron código. Míralo en cada canción.`, 3500);
     } else if (act === 'upload-local') {
       await uploadLocal();
     } else if (act === 'midi-start') {
@@ -1164,6 +1232,33 @@ function samePlace(st, r) {
   return !!st.songId && st.songId === r.songId;
 }
 
+// Llegó un marcador de sección/diapositiva desde Playback.
+function directorSlide(n) {
+  live.lastSlide = { n, at: Date.now() };
+  publishLive({ slide: n, playing: true });
+}
+
+// Playback avisó qué canción arranca: abrirla (dentro del repertorio si está en él).
+function goToSongCode(code) {
+  const song = state.songs.find((x) => +x.pbCode === code);
+  if (!song) { toast(`Playback arrancó la canción con código ${code}, pero ninguna canción de la app lo tiene.`, 4000); return; }
+  // Si el marcador de la primera sección llegó justo antes, no perderlo.
+  live.pendingSlide = live.lastSlide && Date.now() - live.lastSlide.at < 500 ? live.lastSlide.n : null;
+  const r = liveRoute();
+  const inSet = (setId) => (setById(setId)?.items || []).findIndex((it) => it.songId === song.id);
+  let target = null;
+  if (r?.setId && inSet(r.setId) >= 0) target = `#/play/${r.setId}/${inSet(r.setId)}`;
+  else {
+    const today = todayISO();
+    const s = state.setlists
+      .filter((x) => (x.items || []).some((it) => it.songId === song.id) && (x.date || '') >= today)
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0];
+    target = s ? `#/play/${s.id}/${inSet(s.id)}` : `#/song/${song.id}`;
+  }
+  if (location.hash !== target) location.hash = target;
+  else live.pendingSlide = null;
+}
+
 // Al abrir una canción en el director, avisa a los demás (la diapositiva parte de cero).
 function liveEnterView() {
   if (prefs.live === 'director' && !samePlace(live.state, liveRoute())) publishLive({});
@@ -1176,7 +1271,7 @@ function publishLive(patch) {
   const r = liveRoute();
   const st = { slide: 0, playing: false, ...(live.state || {}), ...patch, at: Date.now(), by: prefs.name || '' };
   if (r) {
-    if (!samePlace(live.state, r)) st.slide = patch.slide ?? 0;
+    if (!samePlace(live.state, r)) { st.slide = patch.slide ?? live.pendingSlide ?? 0; live.pendingSlide = null; }
     st.setId = r.setId; st.index = r.index; st.songId = r.songId;
   }
   live.state = st;
@@ -1304,15 +1399,8 @@ async function setupLive() {
       try {
         live.midiStop = await m.startDirector({
           channel: +prefs.liveChannel || 0,
-          onSlide: (n) => publishLive({ slide: n, playing: true }),
-          onSong: (n) => {
-            if (!prefs.liveSong18) return;
-            const r = liveRoute();
-            const s = r && setById(r.setId);
-            if (s && n >= 1 && n <= (s.items || []).length && n - 1 !== r.index) {
-              location.hash = `#/play/${r.setId}/${n - 1}`;
-            }
-          },
+          onSlide: directorSlide,
+          onSongCode: (code) => { if (prefs.liveSongCode) goToSongCode(code); },
           onStart: () => publishLive({ playing: true }),
           onStop: () => publishLive({ playing: false }),
           onClock: (bpm) => {
@@ -1330,7 +1418,7 @@ async function setupLive() {
 }
 
 // Para pruebas desde la consola del navegador: simula lo que manda Playback.
-window.__mialabanzaLive = { publishLive, applyRemoteLive, get state() { return live.state; } };
+window.__mialabanzaLive = { publishLive, applyRemoteLive, goToSongCode, directorSlide, get state() { return live.state; } };
 
 // ---------------- Router ----------------
 

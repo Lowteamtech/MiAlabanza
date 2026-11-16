@@ -178,6 +178,7 @@ details summary { cursor: pointer; font-weight: 700; padding: 6px 0; }
 .song-head h2 { margin: 0; font-size: 26px; line-height: 1.15; }
 .song-head .by { color: var(--muted); }
 .meta-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pb-line { margin-top: 10px; font-size: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--text); }
 .map { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
 .map span { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 2px 8px; font-weight: 700; font-size: 14px; }
 .map span.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; }

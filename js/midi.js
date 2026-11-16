@@ -9,8 +9,9 @@ const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const noteName = (n) => `${NAMES[n % 12]}${Math.floor(n / 12) - 2}`; // 60 = C3 (convención de ProPresenter/Logic)
 
 export const NOTE_PLAYLIST = 17;
-export const NOTE_SONG = 18;
-export const NOTE_SLIDE = 19;
+export const NOTE_SONG = 18;      // F#-1: código de canción 1–127 (velocidad)
+export const NOTE_SLIDE = 19;     // G-1: número de sección/diapositiva (velocidad)
+export const NOTE_SONG_HIGH = 20; // G#-1: código de canción 128–254 (velocidad + 127)
 
 export function midiSupported() {
   return typeof navigator.requestMIDIAccess === 'function';
@@ -114,7 +115,7 @@ export async function startMonitor({ onMessage, onClock, onPorts }) {
 }
 
 // Director: traduce lo que manda Playback a eventos simples.
-export async function startDirector({ channel = 0, onSlide, onSong, onPlaylist, onStart, onStop, onClock, onPorts }) {
+export async function startDirector({ channel = 0, onSlide, onSongCode, onPlaylist, onStart, onStop, onClock, onPorts }) {
   await ensureAccess();
   const clock = clockMeter((bpm) => onClock?.(bpm));
   return subscribe((input, e) => {
@@ -124,7 +125,8 @@ export async function startDirector({ channel = 0, onSlide, onSong, onPlaylist, 
     if (st === 0xfc) { clock(0, st); onStop?.(); return; }
     if ((st & 0xf0) === 0x90 && d2 > 0 && (!channel || (st & 0x0f) + 1 === channel)) {
       if (d1 === NOTE_SLIDE) onSlide?.(d2);
-      else if (d1 === NOTE_SONG) onSong?.(d2);
+      else if (d1 === NOTE_SONG) onSongCode?.(d2);
+      else if (d1 === NOTE_SONG_HIGH) onSongCode?.(d2 + 127);
       else if (d1 === NOTE_PLAYLIST) onPlaylist?.(d2);
     }
   }, onPorts);
