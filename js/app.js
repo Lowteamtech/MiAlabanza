@@ -5,7 +5,7 @@ import {
 import { openStore, cloudConfigured, teamLogin, teamLogout, LocalStore } from './store.js';
 import { Metronome, makeTapper } from './metronome.js';
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 
 // ---------------- Utilidades ----------------
 
@@ -978,8 +978,20 @@ function viewSettings() {
             ${['Todos', ...Array.from({ length: 16 }, (_, k) => 'Canal ' + (k + 1))].map((l, k) => `<option value="${k}"${+prefs.liveChannel === k ? ' selected' : ''}>${l}</option>`).join('')}
           </select></label>
         </div>
-        <label class="row small" style="margin-top:10px"><input type="checkbox" data-p="liveSong18" ${prefs.liveSong18 ? 'checked' : ''}> Cambiar de canción cuando Playback cambia (nota #18). Activar solo si se probó.</label>
-        <p class="small muted">El director recibe el MIDI de la pista "Letras" de Playback (IAC Driver Bus 1). En modo <b>Secciones</b>, el marcador 1 es la primera sección del cifrado, el 2 la segunda, etc. Si una canción parte desfasada, en el director toca <b>Calibrar</b> mientras suena y luego la sección correcta.${store.mode === 'local' ? ' <b>Para que los demás aparatos sigan al director, todos deben estar conectados al equipo.</b>' : ''}</p>
+        <label class="row small" style="margin-top:10px;flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" style="margin-top:4px;flex:none" data-p="liveSong18" ${prefs.liveSong18 ? 'checked' : ''}> Cambiar de canción cuando Playback cambia (nota #18). Activar solo si se probó.</label>
+        <details class="small" style="margin-top:10px"><summary>Cómo configurar Playback</summary>
+          <p><b>En Playback → Configuración → MIDI:</b> Aux 1 → Driver IAC Bus 1 → Canal 2.</p>
+          <p><b>Cada marcador de sección</b> (al inicio de cada caja):</p>
+          <ul>
+            <li>MIDI Bus: <b>Aux 1</b></li>
+            <li>Mensaje: <b>Nota</b></li>
+            <li>Valor: <b>G-1</b> (no G0)</li>
+            <li>Velocidad: <b>número de la sección en orden</b> (1, 2, 3…), igual al mapa de arriba del cifrado (I · I · V1 · V2…). Si una sección se repite, cada vez lleva su propio número.</li>
+          </ul>
+          <p><b>En la app:</b> el Mac con Playback (en Chrome) es el <b>Director</b>, con Canal MIDI 2. Los demás aparatos eligen <b>Sigue al director</b>. Todos conectados al equipo.</p>
+          <p>Si una canción parte desfasada, en el director toca <b>Calibrar</b> mientras suena y luego la sección correcta.</p>
+        </details>
+        ${store.mode === 'local' ? '<p class="small"><b>Para que los demás aparatos sigan al director, todos deben estar conectados al equipo.</b></p>' : ''}
       </fieldset>
 
       <fieldset><legend>MIDI (Playback)</legend>
