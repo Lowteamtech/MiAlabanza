@@ -62,7 +62,7 @@ export function semitonesBetween(fromKey, toKey) {
 }
 
 export function transposeKey(key, semis) {
-  if (!key) return key;
+  if (!key || !(((semis % 12) + 12) % 12)) return key;
   const c = parseChord(key);
   if (!c) return key;
   const minor = /^m(?!aj)/.test(c.suffix);
@@ -130,7 +130,7 @@ export function isSectionHeader(line) {
 const SECTION_ABBR = [
   [/^intro/i, 'I'], [/^(pre[\s-]?coro|pre[\s-]?chorus)/i, 'PC'], [/^(coro|chorus|estribillo|refrain)/i, 'C'],
   [/^(verso|verse|estrofa)/i, 'V'], [/^(puente|bridge)/i, 'P'], [/^(interludio|interlude|instrumental|solo|riff|turn)/i, 'Int'],
-  [/^(tag)/i, 'Tag'], [/^(final|outro|ending)/i, 'F'], [/^vamp/i, 'Vamp'], [/^(post)/i, 'Post'],
+  [/^(tag)/i, 'Tag'], [/^(outro)/i, 'O'], [/^(final|ending)/i, 'F'], [/^vamp/i, 'Vamp'], [/^(post)/i, 'Post'],
 ];
 
 export function sectionShort(label) {

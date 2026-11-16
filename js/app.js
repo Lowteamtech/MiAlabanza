@@ -5,7 +5,7 @@ import {
 import { openStore, cloudConfigured, teamLogin, teamLogout, LocalStore } from './store.js';
 import { Metronome, makeTapper } from './metronome.js';
 
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.1.2';
 
 // ---------------- Utilidades ----------------
 
@@ -527,31 +527,8 @@ function viewPlay(setId, index) {
   };
   draw();
   scrollTo(0, 0);
-  if (prefs.live === 'director') {
-    const st = live.state;
-    if (!st || st.setId !== setId || st.index !== i) publishLive({ setId, index: i, slide: 0 });
-  }
-  highlightSlide(true);
-
-  const onChartClick = (e) => {
-    if (e.target.closest('[data-act=calibrate]')) {
-      if (!live.state?.slide) { toast('Primero dale play en Playback para recibir una diapositiva.', 3500); return; }
-      live.calibrating = !live.calibrating;
-      document.body.classList.toggle('calibrating', live.calibrating);
-      if (live.calibrating) toast(`Toca la línea donde parte la diapositiva ${live.state.slide}`, 4000);
-      return;
-    }
-    const ln = e.target.closest('.chart .ln[data-ck]');
-    if (ln && live.calibrating) {
-      live.calibrating = false;
-      document.body.classList.remove('calibrating');
-      const offset = +ln.dataset.ck - (live.state.slide - 1);
-      store.put('songs', stamp({ ...songById(song.id), slideOffset: offset }));
-      toast('Calibrado. Quedó guardado para esta canción.');
-      song.slideOffset = offset;
-      highlightSlide(false);
-    }
-  };
+  liveEnterView();
+  const onChartClick = calibrateHandler(song);
   $('#view').addEventListener('click', onChartClick);
 
   const go = (dir) => {
@@ -653,7 +630,7 @@ function viewSong(id) {
     const key = baseKey ? transposeKey(baseKey, ctx.semis) : '';
     topbar(song.title || 'Canción', {
       back: '#/songs',
-      actions: `<button class="btn small" data-act="add-to-set">+ Repertorio</button><a class="btn small primary" href="#/song/${esc(id)}/edit">Editar</a>`,
+      actions: `<span class="live-badge hidden" data-role="live"></span><button class="btn small" data-act="add-to-set">+ Repertorio</button><a class="btn small primary" href="#/song/${esc(id)}/edit">Editar</a>`,
     });
     $('#view').innerHTML = `
       <div class="song-head">
@@ -673,8 +650,10 @@ function viewSong(id) {
       <div data-role="pdf-tab" class="${tab === 'pdf' ? '' : 'hidden'}"><div data-role="pdf" class="muted">Cargando PDF…</div></div>
       ${song.updatedBy ? `<p class="muted small" style="margin-top:24px">Última edición: ${esc(song.updatedBy)}</p>` : ''}`;
     const tools = $('.tools');
-    if (tools) wireTools(tools, { ...ctx, onChange: (v) => { ctx.semis = v; const y = scrollY; draw(); scrollTo(0, y); } });
+    if (tools && prefs.live === 'director') tools.insertAdjacentHTML('beforeend', '<button class="btn small" data-act="calibrate" title="Indica en qué línea va la diapositiva actual">Calibrar diapo</button>');
+    if (tools) wireTools(tools, { ...ctx, onChange: (v) => { ctx.semis = v; const y = scrollY; draw(); scrollTo(0, y); highlightSlide(false); } });
     if (tab === 'pdf') showPdf();
+    updateLiveBadge();
   };
 
   const showPdf = async () => {
@@ -688,7 +667,10 @@ function viewSong(id) {
   };
 
   draw();
+  liveEnterView();
   const view = $('#view');
+  const onCal = calibrateHandler(song);
+  view.addEventListener('click', onCal);
   const onClick = (e) => {
     const b = e.target.closest('[data-tab]');
     if (b && b.closest('.tabs')) {
@@ -705,7 +687,11 @@ function viewSong(id) {
   view.addEventListener('click', onClick);
   $('#topbar').addEventListener('click', onTop);
   const offPedal = onPedal((dir) => scrollPage(dir));
-  return () => { view.removeEventListener('click', onClick); $('#topbar').removeEventListener('click', onTop); offPedal(); };
+  return () => {
+    view.removeEventListener('click', onClick); view.removeEventListener('click', onCal);
+    $('#topbar').removeEventListener('click', onTop); offPedal();
+    live.calibrating = false; document.body.classList.remove('calibrating');
+  };
 }
 
 function addToSetlist(song) {
@@ -1132,18 +1118,37 @@ async function uploadLocal() {
 const live = { state: null, unsub: null, midiStop: null, calibrating: false, ports: [], midiError: null };
 const LIVE_FRESH_MS = 2 * 3600 * 1000;
 
+// Dónde está este aparato: en un repertorio (modo Tocar) o en una canción suelta.
 function liveRoute() {
   const p = route();
-  return p[0] === 'play' && p[1] ? { setId: p[1], index: Math.max(0, +p[2] || 0) } : null;
+  if (p[0] === 'play' && p[1]) {
+    const index = Math.max(0, +p[2] || 0);
+    return { setId: p[1], index, songId: setById(p[1])?.items?.[index]?.songId || null };
+  }
+  if (p[0] === 'song' && p[1] && p[2] !== 'edit') return { setId: null, index: null, songId: p[1] };
+  return null;
+}
+
+function samePlace(st, r) {
+  if (!st || !r) return false;
+  if (st.setId && r.setId) return st.setId === r.setId && st.index === r.index;
+  return !!st.songId && st.songId === r.songId;
+}
+
+// Al abrir una canción en el director, avisa a los demás (la diapositiva parte de cero).
+function liveEnterView() {
+  if (prefs.live === 'director' && !samePlace(live.state, liveRoute())) publishLive({});
+  highlightSlide(true);
+  updateLiveBadge();
 }
 
 function publishLive(patch) {
   if (prefs.live !== 'director') return;
   const r = liveRoute();
   const st = { slide: 0, playing: false, ...(live.state || {}), ...patch, at: Date.now(), by: prefs.name || '' };
-  if (r && patch.setId === undefined) {
-    if (st.setId !== r.setId || st.index !== r.index) st.slide = patch.slide ?? 0;
-    st.setId = r.setId; st.index = r.index;
+  if (r) {
+    if (!samePlace(live.state, r)) st.slide = patch.slide ?? 0;
+    st.setId = r.setId; st.index = r.index; st.songId = r.songId;
   }
   live.state = st;
   store.putLive(st);
@@ -1158,10 +1163,10 @@ function applyRemoteLive(st) {
   updateLiveBadge();
   const p = route();
   const r = liveRoute();
-  const canMove = !p.length || p[0] === 'play' || p[0] === 'set';
-  if (canMove && st.setId && setById(st.setId) && (!r || r.setId !== st.setId || r.index !== st.index)) {
-    location.hash = `#/play/${st.setId}/${st.index}`;
-    return;
+  const canMove = !p.length || p[0] === 'play' || p[0] === 'set' || (p[0] === 'song' && p[2] !== 'edit') || p[0] === 'songs';
+  if (canMove && !samePlace(st, r)) {
+    if (st.setId && setById(st.setId)) { location.hash = `#/play/${st.setId}/${st.index}`; return; }
+    if (!st.setId && st.songId && songById(st.songId)) { location.hash = `#/song/${st.songId}`; return; }
   }
   highlightSlide(true);
 }
@@ -1170,9 +1175,8 @@ function highlightSlide(scroll) {
   $$('.chart .ln.live').forEach((e) => e.classList.remove('live'));
   const st = live.state;
   const r = liveRoute();
-  if (prefs.live === 'off' || !st || !r || st.setId !== r.setId || st.index !== r.index || !st.slide) return;
-  const s = setById(r.setId);
-  const song = songById(s?.items?.[r.index]?.songId);
+  if (prefs.live === 'off' || !st || !r || !samePlace(st, r) || !st.slide) return;
+  const song = songById(r.songId);
   if (!song) return;
   const ck = st.slide - 1 + (song.slideOffset || 0);
   const els = $$(`.chart .ln[data-ck="${ck}"]`);
@@ -1182,6 +1186,28 @@ function highlightSlide(scroll) {
     const y = els[0].getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.28;
     window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
   }
+}
+
+function calibrateHandler(song) {
+  return (e) => {
+    if (e.target.closest('[data-act=calibrate]')) {
+      if (!live.state?.slide) { toast('Primero dale play en Playback para recibir una diapositiva.', 3500); return; }
+      live.calibrating = !live.calibrating;
+      document.body.classList.toggle('calibrating', live.calibrating);
+      if (live.calibrating) toast(`Toca la línea donde parte la diapositiva ${live.state.slide}`, 4000);
+      return;
+    }
+    const ln = e.target.closest('.chart .ln[data-ck]');
+    if (ln && live.calibrating) {
+      live.calibrating = false;
+      document.body.classList.remove('calibrating');
+      const offset = +ln.dataset.ck - (live.state.slide - 1);
+      store.put('songs', stamp({ ...songById(song.id), slideOffset: offset }));
+      song.slideOffset = offset;
+      toast('Calibrado. Quedó guardado para esta canción.');
+      highlightSlide(false);
+    }
+  };
 }
 
 function updateLiveBadge() {
