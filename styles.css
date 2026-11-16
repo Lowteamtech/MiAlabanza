@@ -180,6 +180,7 @@ details summary { cursor: pointer; font-weight: 700; padding: 6px 0; }
 .meta-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .map { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
 .map span { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 2px 8px; font-weight: 700; font-size: 14px; }
+.map span.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
 .notes-box { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: var(--radius); padding: 10px 12px; margin: 10px 0; white-space: pre-wrap; }
 .notes-box b { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); margin-bottom: 2px; }
 
@@ -201,6 +202,10 @@ details summary { cursor: pointer; font-weight: 700; padding: 6px 0; }
 .chart .sp { height: .7em; }
 .chart .ln[data-ck] { border-radius: 6px; transition: background-color .25s, box-shadow .25s; }
 .chart .ln.live { background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: -8px 0 0 var(--accent); }
+.chart .sblk { border-radius: 12px; padding: 2px 10px 8px; margin: 0 -10px; transition: background-color .3s, box-shadow .3s; }
+.chart .sblk .sec { margin-top: .8em; }
+.chart .sblk.live { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 5px 0 0 var(--accent); }
+body.calibrating .chart .sblk { cursor: pointer; outline: 1px dashed var(--accent); outline-offset: -2px; }
 body.calibrating .chart .ln[data-ck] { cursor: pointer; outline: 1px dashed var(--accent); outline-offset: 2px; }
 .live-badge { font-size: 13px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: var(--surface-2); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw; }
 .live-badge.on { background: var(--accent); color: var(--accent-ink); }

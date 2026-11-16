@@ -114,7 +114,7 @@ export async function startMonitor({ onMessage, onClock, onPorts }) {
 }
 
 // Director: traduce lo que manda Playback a eventos simples.
-export async function startDirector({ onSlide, onSong, onPlaylist, onStart, onStop, onClock, onPorts }) {
+export async function startDirector({ channel = 0, onSlide, onSong, onPlaylist, onStart, onStop, onClock, onPorts }) {
   await ensureAccess();
   const clock = clockMeter((bpm) => onClock?.(bpm));
   return subscribe((input, e) => {
@@ -122,7 +122,7 @@ export async function startDirector({ onSlide, onSong, onPlaylist, onStart, onSt
     if (st === 0xf8) { clock(e.timeStamp || performance.now(), st); return; }
     if (st === 0xfa || st === 0xfb) { clock(0, st); onStart?.(); return; }
     if (st === 0xfc) { clock(0, st); onStop?.(); return; }
-    if ((st & 0xf0) === 0x90 && d2 > 0) {
+    if ((st & 0xf0) === 0x90 && d2 > 0 && (!channel || (st & 0x0f) + 1 === channel)) {
       if (d1 === NOTE_SLIDE) onSlide?.(d2);
       else if (d1 === NOTE_SONG) onSong?.(d2);
       else if (d1 === NOTE_PLAYLIST) onPlaylist?.(d2);

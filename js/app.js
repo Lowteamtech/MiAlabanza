@@ -5,7 +5,7 @@ import {
 import { openStore, cloudConfigured, teamLogin, teamLogout, LocalStore } from './store.js';
 import { Metronome, makeTapper } from './metronome.js';
 
-const APP_VERSION = '1.1.2';
+const APP_VERSION = '1.2.0';
 
 // ---------------- Utilidades ----------------
 
@@ -46,7 +46,7 @@ function longDate(iso) {
 
 const PREF_DEFAULTS = {
   name: '', instrument: 'general', notation: 'en', fontSize: 20, pedal: 'scroll',
-  theme: 'auto', showChords: true, live: 'off', liveSong18: false,
+  theme: 'auto', showChords: true, live: 'off', liveSong18: false, liveFollow: 'sections', liveChannel: 0,
 };
 function loadPrefs() {
   try { return { ...PREF_DEFAULTS, ...JSON.parse(localStorage.getItem('prefs') || '{}') }; } catch { return { ...PREF_DEFAULTS }; }
@@ -97,9 +97,14 @@ export function renderChart(src, { semis = 0, flats = false, notation = 'en', sh
   // Párrafos de 2 líneas de letra = diapositivas de ProPresenter (para "Seguir a Playback").
   let ck = -1;
   let inChunk = 2;
+  let si = -1; // número de sección (0 = primera) para seguir marcadores de sección
   for (const b of blocks) {
     if (b.type !== 'line') inChunk = 2;
-    if (b.type === 'section') html += `<div class="sec">${esc(b.label)}</div>`;
+    if (b.type === 'section') {
+      if (si >= 0) html += '</div>';
+      si++;
+      html += `<div class="sblk" data-sec="${si}"><div class="sec">${esc(b.label)}</div>`;
+    }
     else if (b.type === 'comment') html += `<div class="cm">${esc(b.text)}</div>`;
     else if (b.type === 'tab') html += `<div class="tab">${esc(b.text)}</div>`;
     else if (b.type === 'space') html += '<div class="sp"></div>';
@@ -127,6 +132,7 @@ export function renderChart(src, { semis = 0, flats = false, notation = 'en', sh
       }
     }
   }
+  if (si >= 0) html += '</div>';
   return `<div class="chart${showChords ? '' : ' no-chords'}">${html}</div>`;
 }
 
@@ -521,7 +527,7 @@ function viewPlay(setId, index) {
         ${i < total - 1 ? `<a class="btn primary" href="#/play/${esc(setId)}/${i + 1}">Siguiente: ${esc(nextSong?.title || '')} →</a>` : `<a class="btn" href="#/set/${esc(setId)}">Fin del repertorio</a>`}
       </div>`;
     const tools = $('.tools');
-    if (prefs.live === 'director') tools.insertAdjacentHTML('beforeend', '<button class="btn small" data-act="calibrate" title="Indica en qué línea va la diapositiva actual">Calibrar diapo</button>');
+    if (prefs.live === 'director') tools.insertAdjacentHTML('beforeend', '<button class="btn small" data-act="calibrate" title="Indica qué parte está sonando ahora">Calibrar</button>');
     wireTools(tools, { ...ctx, onChange: (v) => { ctx.semis = v; const y = scrollY; draw(); scrollTo(0, y); highlightSlide(false); } });
     updateLiveBadge();
   };
@@ -650,7 +656,7 @@ function viewSong(id) {
       <div data-role="pdf-tab" class="${tab === 'pdf' ? '' : 'hidden'}"><div data-role="pdf" class="muted">Cargando PDF…</div></div>
       ${song.updatedBy ? `<p class="muted small" style="margin-top:24px">Última edición: ${esc(song.updatedBy)}</p>` : ''}`;
     const tools = $('.tools');
-    if (tools && prefs.live === 'director') tools.insertAdjacentHTML('beforeend', '<button class="btn small" data-act="calibrate" title="Indica en qué línea va la diapositiva actual">Calibrar diapo</button>');
+    if (tools && prefs.live === 'director') tools.insertAdjacentHTML('beforeend', '<button class="btn small" data-act="calibrate" title="Indica qué parte está sonando ahora">Calibrar</button>');
     if (tools) wireTools(tools, { ...ctx, onChange: (v) => { ctx.semis = v; const y = scrollY; draw(); scrollTo(0, y); highlightSlide(false); } });
     if (tab === 'pdf') showPdf();
     updateLiveBadge();
@@ -962,8 +968,17 @@ function viewSettings() {
           <option value="director"${prefs.live === 'director' ? ' selected' : ''}>Es el DIRECTOR (el Mac con Playback, en Chrome)</option>
           <option value="follow"${prefs.live === 'follow' ? ' selected' : ''}>Sigue al director (iPad, iPhone, otro Mac)</option>
         </select></label>
+        <div class="grid" style="margin-top:10px">
+          <label class="f">Los marcadores de Playback marcan…<select data-p="liveFollow">
+            <option value="sections"${prefs.liveFollow === 'sections' ? ' selected' : ''}>Secciones (Intro, Verso, Coro…)</option>
+            <option value="slides"${prefs.liveFollow === 'slides' ? ' selected' : ''}>Diapositivas de letra (2 líneas)</option>
+          </select></label>
+          <label class="f">Canal MIDI (director)<select data-p="liveChannel">
+            ${['Todos', ...Array.from({ length: 16 }, (_, k) => 'Canal ' + (k + 1))].map((l, k) => `<option value="${k}"${+prefs.liveChannel === k ? ' selected' : ''}>${l}</option>`).join('')}
+          </select></label>
+        </div>
         <label class="row small" style="margin-top:10px"><input type="checkbox" data-p="liveSong18" ${prefs.liveSong18 ? 'checked' : ''}> Cambiar de canción cuando Playback cambia (nota #18). Activar solo si se probó.</label>
-        <p class="small muted">El director recibe el MIDI de la pista "Letras" de Playback (IAC Driver Bus 1). Cada diapositiva se marca como 2 líneas de letra. Si una canción parte desfasada, en el director usa <b>Calibrar diapo</b> mientras suena.${store.mode === 'local' ? ' <b>Para que los demás aparatos sigan al director, todos deben estar conectados al equipo.</b>' : ''}</p>
+        <p class="small muted">El director recibe el MIDI de la pista "Letras" de Playback (IAC Driver Bus 1). En modo <b>Secciones</b>, el marcador 1 es la primera sección del cifrado, el 2 la segunda, etc. Si una canción parte desfasada, en el director toca <b>Calibrar</b> mientras suena y luego la sección correcta.${store.mode === 'local' ? ' <b>Para que los demás aparatos sigan al director, todos deben estar conectados al equipo.</b>' : ''}</p>
       </fieldset>
 
       <fieldset><legend>MIDI (Playback)</legend>
@@ -1000,7 +1015,7 @@ function viewSettings() {
       prefs[t.dataset.p] = t.type === 'checkbox' ? t.checked
         : t.dataset.p === 'fontSize' ? Math.max(12, Math.min(44, +t.value || 20)) : t.value;
       savePrefs();
-      if (t.dataset.p === 'live') setupLive();
+      if (['live', 'liveChannel'].includes(t.dataset.p)) setupLive();
       toast('Ajuste guardado');
     } else if (t.dataset.role === 'import' && t.files[0]) {
       try {
@@ -1175,16 +1190,21 @@ function highlightSlide(scroll) {
   $$('.chart .ln.live').forEach((e) => e.classList.remove('live'));
   const st = live.state;
   const r = liveRoute();
+  $$('.chart .sblk.live').forEach((e) => e.classList.remove('live'));
+  $$('.map span.on').forEach((e) => e.classList.remove('on'));
   if (prefs.live === 'off' || !st || !r || !samePlace(st, r) || !st.slide) return;
   const song = songById(r.songId);
   if (!song) return;
-  const ck = st.slide - 1 + (song.slideOffset || 0);
-  const els = $$(`.chart .ln[data-ck="${ck}"]`);
+  const bySection = prefs.liveFollow === 'sections';
+  const idx = st.slide - 1 + ((bySection ? song.sectionOffset : song.slideOffset) || 0);
+  const els = bySection ? $$(`.chart .sblk[data-sec="${idx}"]`) : $$(`.chart .ln[data-ck="${idx}"]`);
+  if (bySection) $$('.map span').forEach((c, k) => c.classList.toggle('on', k === idx));
   if (!els.length) return;
   els.forEach((e) => e.classList.add('live'));
   if (scroll) {
-    const y = els[0].getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.28;
-    window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+    const y = els[0].getBoundingClientRect().top + window.scrollY - window.innerHeight * (bySection ? 0.12 : 0.28);
+    const far = Math.abs(y - window.scrollY) > window.innerHeight * 1.5;
+    window.scrollTo({ top: Math.max(0, y), behavior: far ? 'auto' : 'smooth' });
   }
 }
 
@@ -1194,16 +1214,23 @@ function calibrateHandler(song) {
       if (!live.state?.slide) { toast('Primero dale play en Playback para recibir una diapositiva.', 3500); return; }
       live.calibrating = !live.calibrating;
       document.body.classList.toggle('calibrating', live.calibrating);
-      if (live.calibrating) toast(`Toca la línea donde parte la diapositiva ${live.state.slide}`, 4000);
+      if (live.calibrating) {
+        toast(prefs.liveFollow === 'sections'
+          ? `Toca la sección que está sonando (marcador ${live.state.slide})`
+          : `Toca la línea donde parte la diapositiva ${live.state.slide}`, 4000);
+      }
       return;
     }
-    const ln = e.target.closest('.chart .ln[data-ck]');
-    if (ln && live.calibrating) {
+    if (!live.calibrating) return;
+    const bySection = prefs.liveFollow === 'sections';
+    const el = bySection ? e.target.closest('.chart .sblk[data-sec]') : e.target.closest('.chart .ln[data-ck]');
+    if (el) {
       live.calibrating = false;
       document.body.classList.remove('calibrating');
-      const offset = +ln.dataset.ck - (live.state.slide - 1);
-      store.put('songs', stamp({ ...songById(song.id), slideOffset: offset }));
-      song.slideOffset = offset;
+      const field = bySection ? 'sectionOffset' : 'slideOffset';
+      const offset = +(bySection ? el.dataset.sec : el.dataset.ck) - (live.state.slide - 1);
+      store.put('songs', stamp({ ...songById(song.id), [field]: offset }));
+      song[field] = offset;
       toast('Calibrado. Quedó guardado para esta canción.');
       highlightSlide(false);
     }
@@ -1222,7 +1249,13 @@ function updateLiveBadge() {
     txt = prefs.live === 'director' ? '● Director · esperando Playback' : 'Siguiendo · sin señal del director';
   } else {
     const parts = [st.playing ? '▶' : '■'];
-    if (st.slide) parts.push('Diapo ' + st.slide);
+    const r = liveRoute();
+    const song = r && samePlace(st, r) ? songById(r.songId) : null;
+    if (st.slide && prefs.liveFollow === 'sections' && song) {
+      const secs = sectionsOf(song.chordpro);
+      const k = st.slide - 1 + (song.sectionOffset || 0);
+      parts.push(secs[k] ? `${secs[k]} (${k + 1}/${secs.length})` : `Marcador ${st.slide}`);
+    } else if (st.slide) parts.push((prefs.liveFollow === 'sections' ? 'Marcador ' : 'Diapo ') + st.slide);
     if (st.bpm) parts.push(st.bpm + ' BPM');
     txt = parts[0] + ' ' + parts.slice(1).join(' · ');
   }
@@ -1245,6 +1278,7 @@ async function setupLive() {
     } else {
       try {
         live.midiStop = await m.startDirector({
+          channel: +prefs.liveChannel || 0,
           onSlide: (n) => publishLive({ slide: n, playing: true }),
           onSong: (n) => {
             if (!prefs.liveSong18) return;
@@ -1311,6 +1345,7 @@ window.addEventListener('hashchange', () => {
   metro.stop(); // al cambiar de canción o de pantalla, el metrónomo se detiene
   render();
   if (changedView && !location.hash.startsWith('#/play')) window.scrollTo(0, 0);
+  if (prefs.live !== 'off') highlightSlide(true); // el seguidor baja a lo que está sonando
 });
 
 // Re-render cuando cambian los datos (otro músico editó, o llegó la sincronización).
@@ -1330,6 +1365,7 @@ function onData() {
     const y = window.scrollY;
     render();
     window.scrollTo(0, y);
+    if (prefs.live !== 'off' && samePlace(live.state, liveRoute())) highlightSlide(true);
   }, 150);
 }
 
