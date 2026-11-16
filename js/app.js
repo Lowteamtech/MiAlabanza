@@ -5,7 +5,7 @@ import {
 import { openStore, cloudConfigured, teamLogin, teamLogout, LocalStore } from './store.js';
 import { Metronome, makeTapper } from './metronome.js';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 
 // ---------------- Utilidades ----------------
 
@@ -963,6 +963,7 @@ function viewSettings() {
       </fieldset>
 
       <fieldset><legend>Seguir a Playback</legend>
+        <p class="small" style="margin:0 0 10px">Estado: <span class="live-badge hidden" data-role="live"></span>${prefs.live === 'off' ? ' <span class="muted">apagado</span>' : ''}</p>
         <label class="f">Este aparato…<select data-p="live">
           <option value="off"${prefs.live === 'off' ? ' selected' : ''}>No sigue a Playback</option>
           <option value="director"${prefs.live === 'director' ? ' selected' : ''}>Es el DIRECTOR (el Mac con Playback, en Chrome)</option>
@@ -1007,6 +1008,7 @@ function viewSettings() {
 
       <p class="small muted">MiAlabanza Team v${APP_VERSION}</p>
     </div>`;
+  updateLiveBadge();
 
   const view = $('#view');
   const onChange = async (e) => {
@@ -1166,7 +1168,7 @@ function publishLive(patch) {
     st.setId = r.setId; st.index = r.index; st.songId = r.songId;
   }
   live.state = st;
-  store.putLive(st);
+  store.putLive(st, liveSyncError);
   highlightSlide(true);
   updateLiveBadge();
 }
@@ -1237,6 +1239,14 @@ function calibrateHandler(song) {
   };
 }
 
+// Errores de Firebase al publicar o escuchar el estado en vivo (p. ej., reglas sin "live").
+function liveSyncError(code) {
+  live.syncError = /permission/i.test(code)
+    ? 'Firebase no da permiso: faltan las reglas con "live"'
+    : 'Error de sincronización (' + code + ')';
+  updateLiveBadge();
+}
+
 function updateLiveBadge() {
   const el = $('[data-role=live]');
   if (!el) return;
@@ -1244,7 +1254,9 @@ function updateLiveBadge() {
   el.classList.remove('hidden');
   const st = live.state;
   let txt;
-  if (prefs.live === 'director' && live.midiError) txt = '⚠ ' + live.midiError;
+  if (store.mode === 'local') txt = '⚠ No conectado al equipo';
+  else if (live.syncError) txt = '⚠ ' + live.syncError;
+  else if (prefs.live === 'director' && live.midiError) txt = '⚠ ' + live.midiError;
   else if (!st || (prefs.live === 'follow' && Date.now() - (st.at || 0) > LIVE_FRESH_MS)) {
     txt = prefs.live === 'director' ? '● Director · esperando Playback' : 'Siguiendo · sin señal del director';
   } else {
@@ -1268,9 +1280,10 @@ async function setupLive() {
   live.unsub?.(); live.unsub = null;
   live.midiStop?.(); live.midiStop = null;
   live.midiError = null;
+  live.syncError = null;
   live.state = null;
   if (prefs.live === 'follow') {
-    live.unsub = store.subscribeLive(applyRemoteLive);
+    live.unsub = store.subscribeLive(applyRemoteLive, liveSyncError);
   } else if (prefs.live === 'director') {
     const m = await import('./midi.js');
     if (!m.midiSupported()) {

@@ -229,15 +229,15 @@ class CloudStore {
   }
 
   // Estado "en vivo": un solo documento que el Mac director actualiza y los demás escuchan.
-  subscribeLive(cb) {
+  subscribeLive(cb, onError) {
     return this.fb.onSnapshot(this.fb.doc(this.db, 'live', 'current'),
       (snap) => cb(snap.exists() ? snap.data() : null),
-      (err) => console.error('live', err));
+      (err) => { console.error('live', err); onError?.(err.code || String(err)); });
   }
 
-  putLive(state) {
+  putLive(state, onError) {
     this.fb.setDoc(this.fb.doc(this.db, 'live', 'current'), JSON.parse(JSON.stringify(state)))
-      .catch((e) => console.error('live', e));
+      .catch((e) => { console.error('live', e); onError?.(e.code || String(e)); });
   }
 
   status() {
