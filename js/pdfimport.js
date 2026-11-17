@@ -127,6 +127,19 @@ function applySignature(chordpro, key) {
   });
 }
 
+// Títulos de sección con letras espaciadas ("I I NT RO", "V1 V ER SO 1"): se juntan las
+// letras y se busca insignia opcional + nombre de sección + número.
+const SPACED_HEADER = /^(.{0,3}?)(INTRODUCCI[OÓ]N|INTRO|PRE-?CORO|POST-?CORO|VERSO|ESTROFA|CORO|PUENTE|INTERLUDIO|INSTRUMENTAL|OUTRO|FINAL|TAG|SOLO|VAMP|REFR[AÁ]N|ESTRIBILLO|PRE-?CHORUS|CHORUS|VERSE|BRIDGE|INTERLUDE|ENDING)(\d{0,2})((?:X|×)\d{1,2})?$/;
+function spacedHeader(t) {
+  const compact = t.replace(/\s+/g, '');
+  // El nombre de la sección debe venir en MAYÚSCULAS (la insignia puede ser "Pr", "C`", etc.)
+  if (!compact || compact.length > 30) return null;
+  const m = SPACED_HEADER.exec(compact);
+  if (!m) return null;
+  const word = m[2].replace(/^(PRE|POST)-?/, '$1 ');
+  return titleCase(word) + (m[3] ? ' ' + m[3] : '') + (m[4] ? ' ' + m[4].toLowerCase() : '');
+}
+
 const titleCase = (s) => s.toLowerCase().replace(/(^|\s|-)(\p{L})/gu, (x, a, b) => a + b.toUpperCase());
 
 // Construye el texto de la línea y la posición X de cada carácter.
@@ -274,6 +287,9 @@ export async function importPdf(file) {
     if (JUNK.some((re) => re.test(t.trim()))) continue;
     if (title && norm(firstCell(t)) === norm(title)) continue; // encabezado repetido en cada página
     if (isMetaLine(t)) continue;
+    if (/^(\d{1,2}\s+)*\d{1,2}$/.test(t.trim())) continue; // números sueltos (repeticiones del mapa: "2 2 2 2")
+    const spaced = !isSectionHeader(t) && !isChordLine(t) ? spacedHeader(t) : null;
+    if (spaced) { out.push('', `{c: ${spaced}}`); afterHeader = true; continue; }
     const toks = t.trim().split(/\s+/);
     if (toks.length >= 5 && toks.every((w) => w.length <= 3) && !isChordLine(t)) continue; // mapa de secciones (V1 V2 Pr C…)
     if (isSectionHeader(t)) { out.push('', `{c: ${t.trim().replace(/:\s*$/, '')}}`); afterHeader = true; continue; }
