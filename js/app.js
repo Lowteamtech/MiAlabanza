@@ -5,7 +5,7 @@ import {
 import { openStore, cloudConfigured, teamLogin, teamLogout, LocalStore } from './store.js';
 import { Metronome, makeTapper } from './metronome.js';
 
-const APP_VERSION = '1.3.2';
+const APP_VERSION = '1.3.3';
 
 // ---------------- Utilidades ----------------
 
@@ -815,7 +815,7 @@ function viewEdit(id) {
           <div class="help card small hidden" data-role="help">
             <p>Pon cada acorde entre corchetes, justo antes de la sílaba donde cambia:</p>
             <pre>[G]Santo, [D]santo, [Em]santo</pre>
-            <p>Secciones: una línea con <code>{c: Coro}</code>, o simplemente <code>Coro</code>, <code>Verso 2</code>, <code>Puente</code>, <code>Intro</code>.</p>
+            <p>Secciones: una línea con <code>{c: Coro}</code>, o simplemente <code>Coro</code>, <code>Verso 2</code>, <code>Puente</code>, <code>Intro</code>. Para una sección con nombre propio usa <code>{section: Baje Intensidad}</code>.</p>
             <p>Líneas solo de acordes: <code>[G] [D] [Em] [C]</code>. Notas en cursiva: <code>{c: Repetir 2 veces}</code>.</p>
             <p>¿Tienes el cifrado con acordes en una línea y la letra abajo? Pégalo tal cual y toca <b>Convertir acordes sobre la letra</b>.</p>
           </div>

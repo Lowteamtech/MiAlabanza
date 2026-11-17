@@ -1,6 +1,6 @@
 // Service worker: guarda la app completa para que funcione sin señal.
 // Al publicar una versión nueva, cambia VERSION.
-const VERSION = 'mialabanza-v1.3.2';
+const VERSION = 'mialabanza-v1.3.3';
 const FILES = [
   './',
   './index.html',

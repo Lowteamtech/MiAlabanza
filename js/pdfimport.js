@@ -140,6 +140,25 @@ function spacedHeader(t) {
   return titleCase(word) + (m[3] ? ' ' + m[3] : '') + (m[4] ? ' ' + m[4].toLowerCase() : '');
 }
 
+// Devuelve el nombre de la sección si la línea es un encabezado; si no, null.
+// Acepta: "Coro", "Verso 2:", "V1 VERSO 1", "C` CORO 1", "I I NT RO" (letras espaciadas)
+// y nombres propios en mayúsculas con insignia: "Bi BAJE INTENSIDAD".
+function headerOf(t) {
+  if (!t || !t.trim() || isChordLine(t)) return null;
+  const clean = t.trim().replace(/:\s*$/, '');
+  if (isSectionHeader(t)) return clean === clean.toUpperCase() ? titleCase(clean) : clean;
+  const badge = /^\s*\S{1,3}\s+(.{3,})$/.exec(t);
+  if (badge && isSectionHeader(badge[1])) {
+    const name = badge[1].trim().replace(/:\s*$/, '');
+    return name === name.toUpperCase() ? titleCase(name) : name;
+  }
+  const spaced = spacedHeader(t);
+  if (spaced) return spaced;
+  const caps = /^\s*([A-Z][A-Za-z0-9`´']{0,2})\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ0-9 ]{5,40})$/.exec(t);
+  if (caps && /[A-ZÁÉÍÓÚÑ]{4,}/.test(caps[2])) return titleCase(caps[2].trim().replace(/\s{2,}/g, ' '));
+  return null;
+}
+
 const titleCase = (s) => s.toLowerCase().replace(/(^|\s|-)(\p{L})/gu, (x, a, b) => a + b.toUpperCase());
 
 // Construye el texto de la línea y la posición X de cada carácter.
@@ -233,8 +252,18 @@ export async function importPdf(file) {
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const vp = page.getViewport({ scale: 1 });
-    const items = itemsOf(await page.getTextContent());
+    let items = itemsOf(await page.getTextContent());
     if (!items.length) continue;
+    const roadmap = new Set();
+    for (const l of groupLines(items)) {
+      const toks = l.items.map((i) => i.str.trim()).filter(Boolean);
+      const txt = toks.join(' ');
+      // Insignias del mapa: "I", "V1", "C`", "Pr", "Bi"… (no superíndices sueltos como "9" o "maj")
+      if (toks.length >= 5 && toks.every((w) => /^[A-Z][A-Za-z0-9`´']{0,2}$/.test(w)) && !isChordLine(txt)) {
+        l.items.forEach((i) => roadmap.add(i));
+      }
+    }
+    if (roadmap.size) items = items.filter((i) => !roadmap.has(i));
     for (const colItems of splitColumns(items, vp.width)) {
       const real = colItems.filter((i) => i.str.trim() && i.w > 0);
       const charW = median(real.map((i) => i.w / i.str.length)) || 5;
@@ -254,6 +283,7 @@ export async function importPdf(file) {
   }
 
   const meta = extractMeta(allText);
+  const typicalH = median(allLines.filter((l) => !l.blank && !isChordLine(l.text)).map((l) => l.h)) || 12;
 
   // Título: la línea más grande cerca del inicio de la primera página.
   const firstPage = allLines.filter((l) => l.page === 1 && l.text.trim()).slice(0, 8);
@@ -278,6 +308,7 @@ export async function importPdf(file) {
 
   const out = [];
   let afterHeader = false; // justo después de un encabezado de sección: notas de dinámica
+  let lastNoteEnd = null;
   for (let i = 0; i < allLines.length; i++) {
     const l = allLines[i];
     if (skip.has(l)) continue;
@@ -288,30 +319,34 @@ export async function importPdf(file) {
     if (title && norm(firstCell(t)) === norm(title)) continue; // encabezado repetido en cada página
     if (isMetaLine(t)) continue;
     if (/^(\d{1,2}\s+)*\d{1,2}$/.test(t.trim())) continue; // números sueltos (repeticiones del mapa: "2 2 2 2")
-    const spaced = !isSectionHeader(t) && !isChordLine(t) ? spacedHeader(t) : null;
-    if (spaced) { out.push('', `{c: ${spaced}}`); afterHeader = true; continue; }
+    const head = headerOf(t);
+    if (head) {
+      // Nombres estándar (Coro, Verso 2…) como {c: …}; nombres propios ("Baje Intensidad") como {section: …}
+      out.push('', isSectionHeader(head) ? `{c: ${head}}` : `{section: ${head}}`);
+      afterHeader = true; lastNoteEnd = null; continue;
+    }
     const toks = t.trim().split(/\s+/);
     if (toks.length >= 5 && toks.every((w) => w.length <= 3) && !isChordLine(t)) continue; // mapa de secciones (V1 V2 Pr C…)
-    if (isSectionHeader(t)) { out.push('', `{c: ${t.trim().replace(/:\s*$/, '')}}`); afterHeader = true; continue; }
-    // Encabezado con insignia: "V1 VERSO 1", "C` CORO 1", "Pr PRE CORO"
-    const badge = /^\s*\S{1,3}\s+(.{3,})$/.exec(t);
-    if (badge && isSectionHeader(badge[1])) {
-      const name = badge[1].trim().replace(/:\s*$/, '');
-      out.push('', `{c: ${name === name.toUpperCase() ? titleCase(name) : name}}`);
-      afterHeader = true;
-      continue;
-    }
-    // Notas de la sección alineadas a la derecha ("Baja Intensidad", "Bombo en 1/4")
-    if (afterHeader && !isChordLine(t) && l.x0 > l.colX0 + l.colW * 0.3) {
-      out.push(`{c: ${t.trim().replace(/\s{2,}/g, ' ')}}`);
+    // Notas de la sección bajo el título: alineadas a la derecha o en letra más chica
+    // ("Baja Intensidad", "Bombo en 1/4", "Agregar Bajo, Guitarra Eléctrica…")
+    const rightAligned = l.end >= l.colX0 + l.colW * 0.96 || l.x0 > l.colX0 + l.colW * 0.3
+      || (lastNoteEnd !== null && Math.abs(l.end - lastNoteEnd) < 4); // mismo borde derecho que la nota anterior
+    if (afterHeader && !isChordLine(t) && (rightAligned || l.h < typicalH * 0.95)) {
+      const note = t.trim().replace(/\s{2,}/g, ' ');
+      const prev = out[out.length - 1];
+      // Nota que el PDF cortó en dos líneas: la continuación empieza en minúscula.
+      if (lastNoteEnd !== null && /^\p{Ll}/u.test(note) && /^\{c: .*\}$/.test(prev)) out[out.length - 1] = prev.slice(0, -1) + ' ' + note + '}';
+      else out.push(`{c: ${note}}`);
+      lastNoteEnd = l.end;
       continue;
     }
     afterHeader = false;
+    lastNoteEnd = null;
     if (/^\s*(©|\(c\)|ccli|copyright|compositor)/i.test(t)) { out.push(`{c: ${t.trim().replace(/\s{2,}/g, ' ')}}`); continue; }
     if (isChordLine(t)) {
       const next = allLines[i + 1];
       const close = next && !next.blank && next.page === l.page && (l.y - next.y) < Math.max(l.h, next.h) * 2.6;
-      if (close && !isChordLine(next.text) && !isSectionHeader(next.text) && !skip.has(next)) {
+      if (close && !isChordLine(next.text) && !headerOf(next.text) && !skip.has(next)) {
         out.push(mergeByX(l, next, l.charW));
         i++;
       } else {
@@ -329,7 +364,8 @@ export async function importPdf(file) {
     out.push(t);
   }
 
-  let chordpro = out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  let chordpro = out.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+    .replace(/n~/g, 'ñ').replace(/N~/g, 'Ñ').normalize('NFC');
 
   // Bemoles/sostenidos dibujados (no vienen como texto): se completan con la armadura del tono.
   const explicitAcc = /\[[A-G][#b♯♭]|\/[A-G][#b♯♭]/.test(chordpro);

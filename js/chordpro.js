@@ -173,6 +173,9 @@ export function parseChordPro(src) {
           if (isSectionHeader(val)) blocks.push({ type: 'section', label: val.replace(/:\s*$/, '') });
           else blocks.push({ type: 'comment', text: val });
           break;
+        case 'section': case 'sec': case 'part': case 'start_of_part': case 'start_of_section':
+          if (val) blocks.push({ type: 'section', label: val.replace(/:\s*$/, '') });
+          break;
         case 'soc': case 'start_of_chorus': blocks.push({ type: 'section', label: val || 'Coro' }); break;
         case 'sov': case 'start_of_verse': blocks.push({ type: 'section', label: val || 'Verso' }); break;
         case 'sob': case 'start_of_bridge': blocks.push({ type: 'section', label: val || 'Puente' }); break;
